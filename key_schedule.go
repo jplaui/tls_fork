@@ -5,12 +5,12 @@
 package tls
 
 import (
-	"crypto/ecdh"
 	"crypto/hmac"
 	"errors"
 	"fmt"
 	"hash"
 	"io"
+	"proxy/tls_fork/ecdh"
 
 	"golang.org/x/crypto/cryptobyte"
 	"golang.org/x/crypto/hkdf"

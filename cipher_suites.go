@@ -10,14 +10,12 @@ import (
 	"crypto/cipher"
 	"crypto/des"
 	"crypto/hmac"
-	"crypto/internal/boring"
 	"crypto/rc4"
 	"crypto/sha1"
 	"crypto/sha256"
 	"fmt"
 	"hash"
-	"internal/cpu"
-	"runtime"
+	"proxy/tls_fork/internal/boring"
 
 	"golang.org/x/crypto/chacha20poly1305"
 )
@@ -355,15 +353,17 @@ var defaultCipherSuitesTLS13NoAES = []uint16{
 }
 
 var (
-	hasGCMAsmAMD64 = cpu.X86.HasAES && cpu.X86.HasPCLMULQDQ
-	hasGCMAsmARM64 = cpu.ARM64.HasAES && cpu.ARM64.HasPMULL
-	// Keep in sync with crypto/aes/cipher_s390x.go.
-	hasGCMAsmS390X = cpu.S390X.HasAES && cpu.S390X.HasAESCBC && cpu.S390X.HasAESCTR &&
-		(cpu.S390X.HasGHASH || cpu.S390X.HasAESGCM)
+	// hasGCMAsmAMD64 = cpu.X86.HasAES && cpu.X86.HasPCLMULQDQ
+	// hasGCMAsmARM64 = cpu.ARM64.HasAES && cpu.ARM64.HasPMULL
+	// // Keep in sync with crypto/aes/cipher_s390x.go.
+	// hasGCMAsmS390X = cpu.S390X.HasAES && cpu.S390X.HasAESCBC && cpu.S390X.HasAESCTR &&
+	// 	(cpu.S390X.HasGHASH || cpu.S390X.HasAESGCM)
 
-	hasAESGCMHardwareSupport = runtime.GOARCH == "amd64" && hasGCMAsmAMD64 ||
-		runtime.GOARCH == "arm64" && hasGCMAsmARM64 ||
-		runtime.GOARCH == "s390x" && hasGCMAsmS390X
+	// hasAESGCMHardwareSupport = runtime.GOARCH == "amd64" && hasGCMAsmAMD64 ||
+	// 	runtime.GOARCH == "arm64" && hasGCMAsmARM64 ||
+	// 	runtime.GOARCH == "s390x" && hasGCMAsmS390X
+
+	hasAESGCMHardwareSupport = false
 )
 
 var aesgcmCiphers = map[uint16]bool{

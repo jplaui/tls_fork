@@ -8,11 +8,11 @@ import (
 	"bytes"
 	"context"
 	"crypto"
-	"crypto/ecdh"
 	"crypto/hmac"
 	"crypto/rsa"
 	"errors"
 	"hash"
+	"proxy/tls_fork/ecdh"
 	"time"
 )
 

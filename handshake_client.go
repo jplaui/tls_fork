@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"context"
 	"crypto"
-	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rsa"
@@ -19,6 +18,7 @@ import (
 	"hash"
 	"io"
 	"net"
+	"proxy/tls_fork/ecdh"
 	"strings"
 	"time"
 )
