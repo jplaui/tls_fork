@@ -5,7 +5,7 @@
 package tls
 
 import (
-	"crypto/ecdh"
+	"client/tls/ecdh"
 	"crypto/hmac"
 	"errors"
 	"fmt"

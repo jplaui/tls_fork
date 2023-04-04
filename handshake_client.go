@@ -6,9 +6,9 @@ package tls
 
 import (
 	"bytes"
+	"client/tls/ecdh"
 	"context"
 	"crypto"
-	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rsa"

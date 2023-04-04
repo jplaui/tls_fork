@@ -5,8 +5,8 @@
 package tls
 
 import (
+	"client/tls/ecdh"
 	"crypto"
-	"crypto/ecdh"
 	"crypto/md5"
 	"crypto/rsa"
 	"crypto/sha1"
