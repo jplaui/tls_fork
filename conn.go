@@ -12,6 +12,7 @@ import (
 	"crypto/cipher"
 	"crypto/subtle"
 	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash"
@@ -160,6 +161,19 @@ func (c *Conn) NetConn() net.Conn {
 	return c.conn
 }
 
+func (c *Conn) ShowRecordMap() string {
+	var buffer bytes.Buffer
+	for k := range c.in.recordMap {
+		buffer.WriteString(k)
+		buffer.WriteString(";")
+	}
+	return buffer.String()
+}
+
+func (c *Conn) RawRecordMap() map[string]recordMeta {
+	return c.in.recordMap
+}
+
 // A halfConn represents one direction of the record layer
 // connection, either sending or receiving.
 type halfConn struct {
@@ -177,6 +191,28 @@ type halfConn struct {
 	nextMac    hash.Hash // next MAC algorithm
 
 	trafficSecret []byte // current TLS 1.3 traffic secret
+
+	// jan
+	recordMap map[string]recordMeta
+}
+
+type recordMeta struct {
+	additionalData []byte
+	nonce          []byte
+	trafficSecret  []byte  // current TLS 1.3 traffic secret
+	seq            [8]byte // 64-bit sequence number
+}
+
+func (hc *halfConn) setRecordMeta(hash string, ad, nonce, trafficSecret []byte, seq [8]byte) {
+	if hc.recordMap == nil {
+		hc.recordMap = make(map[string]recordMeta)
+	}
+	hc.recordMap[hash] = recordMeta{
+		additionalData: ad,
+		nonce:          nonce,
+		trafficSecret:  trafficSecret,
+		seq:            seq,
+	}
 }
 
 type permanentError struct {
@@ -336,6 +372,8 @@ func (hc *halfConn) decrypt(record []byte) ([]byte, recordType, error) {
 	typ := recordType(record[0])
 	payload := record[recordHeaderLen:]
 
+	fmt.Println("record type:", typ)
+
 	// In TLS 1.3, change_cipher_spec messages are to be ignored without being
 	// decrypted. See RFC 8446, Appendix D.4.
 	if hc.version == VersionTLS13 && typ == recordTypeChangeCipherSpec {
@@ -372,7 +410,21 @@ func (hc *halfConn) decrypt(record []byte) ([]byte, recordType, error) {
 			}
 
 			var err error
-			plaintext, err = c.Open(payload[:0], nonce, payload, additionalData)
+			fmt.Println("")
+			fmt.Println("record---:", hex.EncodeToString(payload))
+			fmt.Println("record...:", hex.EncodeToString(payload[:0]))
+			fmt.Println("additionalData:", hex.EncodeToString(additionalData))
+			fmt.Println("nonce:", hex.EncodeToString(nonce))
+			fmt.Println("")
+			fmt.Println("record hash:", hex.EncodeToString(Sum256(payload)))
+			recordHash := hex.EncodeToString(Sum256(payload))
+			fmt.Println("hc.trafficSecret:", hex.EncodeToString(hc.trafficSecret))
+			sample := make([]byte, 0)                                                     // same as // payload[:0]
+			plaintext, err = c.Open(sample, nonce, payload, additionalData)               // payload[:0]
+			hc.setRecordMeta(recordHash, additionalData, nonce, hc.trafficSecret, hc.seq) // make(map[string]float64)
+			fmt.Println("")
+			fmt.Println("plaintext:", hex.EncodeToString(plaintext))
+			fmt.Println("")
 			if err != nil {
 				return nil, 0, alertBadRecordMAC
 			}
