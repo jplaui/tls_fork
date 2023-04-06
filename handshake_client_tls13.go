@@ -401,38 +401,45 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: invalid server key share")
 	}
-	fmt.Println("DHE:", hex.EncodeToString(sharedKey))
+	// fmt.Println("DHE:", hex.EncodeToString(sharedKey))
+	c.SetSecret("DHE", sharedKey)
 
 	// earlySecret = ES
 	earlySecret := hs.earlySecret
 	if !hs.usingPSK {
 		earlySecret = hs.suite.extract(nil, nil)
 	}
-	fmt.Println("ES:", hex.EncodeToString(earlySecret))
+	// fmt.Println("ES:", hex.EncodeToString(earlySecret))
+	c.SetSecret("ES", earlySecret)
 
 	// derive handshake traffic secret client and server
 	// dES: hs.suite.deriveSecret(earlySecret, "derived", nil)
-	fmt.Println("dES:", hex.EncodeToString(hs.suite.deriveSecret(earlySecret, "derived", nil)))
+	// fmt.Println("dES:", hex.EncodeToString(hs.suite.deriveSecret(earlySecret, "derived", nil)))
+	c.SetSecret("dES", hs.suite.deriveSecret(earlySecret, "derived", nil))
 	handshakeSecret := hs.suite.extract(sharedKey,
 		hs.suite.deriveSecret(earlySecret, "derived", nil))
+	c.SetSecret("HS", handshakeSecret)
 	// print HS
-	fmt.Println("HS:", hex.EncodeToString(handshakeSecret))
+	// fmt.Println("HS:", hex.EncodeToString(handshakeSecret))
 
 	// print CHTS
 	clientSecret := hs.suite.deriveSecret(handshakeSecret,
 		clientHandshakeTrafficLabel, hs.transcript)
-	fmt.Println("H_2=(clientHello||serverHello):", hex.EncodeToString(hs.transcript.Sum(nil)))
-	fmt.Println("CHTS:", hex.EncodeToString(clientSecret))
+	// fmt.Println("H_2=(clientHello||serverHello):", hex.EncodeToString(hs.transcript.Sum(nil)))
+	// fmt.Println("CHTS:", hex.EncodeToString(clientSecret))
+	c.SetSecret("CHTS", clientSecret)
 	c.out.setTrafficSecret(hs.suite, clientSecret)
 
 	// SHTS
 	serverSecret := hs.suite.deriveSecret(handshakeSecret,
 		serverHandshakeTrafficLabel, hs.transcript)
-	fmt.Println("H_2=(clientHello||serverHello):", hex.EncodeToString(hs.transcript.Sum(nil)))
-	fmt.Println("SHTS:", hex.EncodeToString(serverSecret))
+	c.SetSecret("H2", hs.transcript.Sum(nil))
+	c.SetSecret("SHTS", serverSecret)
+	// fmt.Println("H_2=(clientHello||serverHello):", hex.EncodeToString(hs.transcript.Sum(nil)))
+	// fmt.Println("SHTS:", hex.EncodeToString(serverSecret))
 	c.in.setTrafficSecret(hs.suite, serverSecret)
 
-	fmt.Println("hc.trafficSecret", c.in.trafficSecret)
+	// fmt.Println("hc.trafficSecret", c.in.trafficSecret)
 
 	err = c.config.writeKeyLog(keyLogLabelClientHandshake, hs.hello.random, clientSecret)
 	if err != nil {
@@ -446,11 +453,13 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 	}
 
 	// MS
-	fmt.Println("dHS", hex.EncodeToString(hs.suite.deriveSecret(handshakeSecret, "derived", nil))) // H_0=Hash(nil)
+	c.SetSecret("dHS", hs.suite.deriveSecret(handshakeSecret, "derived", nil))
+	// fmt.Println("dHS", hex.EncodeToString(hs.suite.deriveSecret(handshakeSecret, "derived", nil))) // H_0=Hash(nil)
 	hs.masterSecret = hs.suite.extract(nil,
 		hs.suite.deriveSecret(handshakeSecret, "derived", nil))
 
-	fmt.Println("MS:", hex.EncodeToString(hs.masterSecret))
+	c.SetSecret("MS", hs.masterSecret)
+	// fmt.Println("MS:", hex.EncodeToString(hs.masterSecret))
 
 	return nil
 }
@@ -566,7 +575,8 @@ func (hs *clientHandshakeStateTLS13) readServerCertificate() error {
 		return err
 	}
 
-	fmt.Println("H_7:", hex.EncodeToString(hs.transcript.Sum(nil)))
+	// fmt.Println("H_7:", hex.EncodeToString(hs.transcript.Sum(nil)))
+	c.SetSecret("H7", hs.transcript.Sum(nil))
 
 	return nil
 }
@@ -588,8 +598,8 @@ func (hs *clientHandshakeStateTLS13) readServerFinished() error {
 		return unexpectedMessageError(finished, msg)
 	}
 
-	fmt.Println("SF raw:", hex.EncodeToString(finished.raw[:]))
-	fmt.Println("SF verifydata:", hex.EncodeToString(finished.verifyData[:]))
+	// fmt.Println("SF raw:", hex.EncodeToString(finished.raw[:]))
+	// fmt.Println("SF verifydata:", hex.EncodeToString(finished.verifyData[:]))
 
 	expectedMAC := hs.suite.finishedHash(c.in.trafficSecret, hs.transcript)
 	if !hmac.Equal(expectedMAC, finished.verifyData) {
@@ -606,12 +616,15 @@ func (hs *clientHandshakeStateTLS13) readServerFinished() error {
 	// jan: here, derive application traffic secrets!
 	hs.trafficSecret = hs.suite.deriveSecret(hs.masterSecret,
 		clientApplicationTrafficLabel, hs.transcript)
-	fmt.Println("CATS:", hex.EncodeToString(hs.trafficSecret))
+	// fmt.Println("CATS:", hex.EncodeToString(hs.trafficSecret))
+	c.SetSecret("CATS", hs.trafficSecret)
 	serverSecret := hs.suite.deriveSecret(hs.masterSecret,
 		serverApplicationTrafficLabel, hs.transcript)
 
-	fmt.Println("H_3:", hex.EncodeToString(hs.transcript.Sum(nil)))
-	fmt.Println("SATS:", hex.EncodeToString(serverSecret))
+	// fmt.Println("H_3:", hex.EncodeToString(hs.transcript.Sum(nil)))
+	c.SetSecret("H3", hs.transcript.Sum(nil))
+	// fmt.Println("SATS:", hex.EncodeToString(serverSecret))
+	c.SetSecret("SATS", serverSecret)
 	c.in.setTrafficSecret(hs.suite, serverSecret)
 
 	err = c.config.writeKeyLog(keyLogLabelClientTraffic, hs.hello.random, hs.trafficSecret)

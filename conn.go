@@ -118,6 +118,9 @@ type Conn struct {
 	activeCall atomic.Int32
 
 	tmp [16]byte
+
+	// jan
+	secretMap map[string][]byte
 }
 
 // Access to net.Conn methods.
@@ -161,23 +164,35 @@ func (c *Conn) NetConn() net.Conn {
 	return c.conn
 }
 
+// jan Conn extra methods
+func (c *Conn) SetSecret(name string, value []byte) {
+	if c.secretMap == nil {
+		c.secretMap = make(map[string][]byte)
+	}
+	c.secretMap[name] = value
+}
+
+func (c *Conn) GetSecretMap() map[string][]byte {
+	return c.secretMap
+}
+
 func (c *Conn) ShowRecordMap() string {
 	var buffer bytes.Buffer
 	for k, v := range c.in.recordMap {
 		buffer.WriteString(k)
 		buffer.WriteString(":\n")
-		if v.typ == "SF" {
-			buffer.WriteString(hex.EncodeToString(v.payload))
+		if v.Typ == "SF" {
+			buffer.WriteString(hex.EncodeToString(v.Payload))
 		}
-		if v.typ == "SR" {
-			buffer.WriteString(string(v.payload))
+		if v.Typ == "SR" {
+			buffer.WriteString(string(v.Payload))
 		}
 		buffer.WriteString("\n")
 	}
 	return buffer.String()
 }
 
-func (c *Conn) RawRecordMap() map[string]recordMeta {
+func (c *Conn) GetRecordMap() map[string]RecordMeta {
 	return c.in.recordMap
 }
 
@@ -200,27 +215,27 @@ type halfConn struct {
 	trafficSecret []byte // current TLS 1.3 traffic secret
 
 	// jan
-	recordMap map[string]recordMeta
+	recordMap map[string]RecordMeta
 }
 
-type recordMeta struct {
-	additionalData []byte
-	nonce          []byte
-	typ            string
+type RecordMeta struct {
+	AdditionalData []byte
+	Nonce          []byte
+	Typ            string
 	// payload==SHTS, if typ==SF
 	// payload==plaintext, if typ==RS
-	payload []byte
+	Payload []byte
 }
 
 func (hc *halfConn) setRecordMeta(ad, nonce, payload []byte, recordHash, typ string) {
 	if hc.recordMap == nil {
-		hc.recordMap = make(map[string]recordMeta)
+		hc.recordMap = make(map[string]RecordMeta)
 	}
-	hc.recordMap[recordHash] = recordMeta{
-		additionalData: ad,
-		nonce:          nonce,
-		payload:        payload,
-		typ:            typ,
+	hc.recordMap[recordHash] = RecordMeta{
+		AdditionalData: ad,
+		Nonce:          nonce,
+		Payload:        payload,
+		Typ:            typ,
 	}
 }
 
@@ -416,6 +431,11 @@ func (hc *halfConn) decrypt(record []byte, handshakeComplete bool) ([]byte, reco
 				additionalData = append(additionalData, byte(n>>8), byte(n))
 			}
 
+			// create new nonce which is independent of seq,
+			// otherwise it changes when storing in file later
+			tmp_nonce := make([]byte, 8)
+			copy(tmp_nonce, nonce)
+
 			var err error
 			plaintext, err = c.Open(payload[:0], nonce, payload, additionalData)
 			if err != nil {
@@ -429,13 +449,13 @@ func (hc *halfConn) decrypt(record []byte, handshakeComplete bool) ([]byte, reco
 					if bytes.Equal(plaintext[:3], []byte{20, 0, 0}) {
 
 						// found SF
-						hc.setRecordMeta(additionalData, nonce, hc.trafficSecret, hex.EncodeToString(Sum256(payload)), "SF")
+						hc.setRecordMeta(additionalData, tmp_nonce, hc.trafficSecret, hex.EncodeToString(Sum256(payload)), "SF")
 					}
 				}
 				if handshakeComplete {
 
 					// capture post handshake traffic (server response data)
-					hc.setRecordMeta(additionalData, nonce, payload, hex.EncodeToString(Sum256(payload)), "SR")
+					hc.setRecordMeta(additionalData, tmp_nonce, payload, hex.EncodeToString(Sum256(payload)), "SR")
 				}
 			}
 
