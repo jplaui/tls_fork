@@ -1,6 +1,7 @@
 package tls
 
 import (
+	"encoding/hex"
 	"math/big"
 	"reflect"
 	"testing"
@@ -11,11 +12,11 @@ var testDataAES128GCM13 = []struct {
 	trafficSecret, nonce, ciphertext, additionalData, plaintext string
 }{
 	{
-		"00c37976b9763eb4db5fd2a672941ea5a3fe0e823b8ff027cabc7f031755eeaf",
+		"349c87d5003e68d39e96426621fdd78e78b1ac6f35d1993e153be5365464cdc9",
 		"0000000000000003",
-		"299f12e2d244445192d96c8b5b90aecd188d80baceb08a4858e7629cb6ffc1be00bd613e2a00791f3f494ab54e7173481f0733d127",
+		"a72050f7d03b8bdf234c88712998bf035db9b2a0ec30cb52008edebed46781ccdca0f65b157d20b0ff3404a7363fed666114646b94",
 		"1703030035",
-		"14000020de1ca1109bfbfe76941ed12e24bfd823dcc49e5fe3236e6a6091d2df5c0ded7f16",
+		"140000203f7d30ee2f6ba983828e133a45cff2aa2d0dc19b5f7b959db282c5fbc23966d916",
 	},
 }
 
@@ -24,23 +25,21 @@ func TestDecryptAESGCM13(t *testing.T) {
 	for _, test := range testDataAES128GCM13 {
 
 		ts, _ := new(big.Int).SetString(test.trafficSecret, 16)
-		n, _ := new(big.Int).SetString(test.nonce, 16)
+		nonce, _ := hex.DecodeString(test.nonce)
 		c, _ := new(big.Int).SetString(test.ciphertext, 16)
 		ad, _ := new(big.Int).SetString(test.additionalData, 16)
-		pt, _ := new(big.Int).SetString(test.plaintext, 16)
 		trafficSecret := ts.Bytes()
-		nonce := n.Bytes()
 		ciphertext := c.Bytes()
 		additionalData := ad.Bytes()
-		plaintextPrime := pt.Bytes()
 
+		// decryption
 		plaintext, err := DecryptAESGCM13(trafficSecret, nonce, ciphertext, additionalData)
 		if err != nil {
 			t.Errorf("aes decrypt error: %s", err)
 		}
-		t.Log(plaintext)
-		t.Log(plaintextPrime)
-		if !reflect.DeepEqual(plaintext, plaintextPrime) {
+
+		// assert equal
+		if !reflect.DeepEqual(plaintext, test.plaintext) {
 			t.Errorf("aes decrypt failed.")
 			return
 		}

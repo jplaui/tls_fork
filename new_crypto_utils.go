@@ -10,7 +10,6 @@ import (
 )
 
 // AES GCM
-
 func DecryptAESGCM13(trafficSecret, nonce, ciphertext, additionalData []byte) (string, error) {
 
 	var cipherSuitesTLS13 = []*cipherSuiteTLS13{

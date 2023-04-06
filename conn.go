@@ -163,9 +163,16 @@ func (c *Conn) NetConn() net.Conn {
 
 func (c *Conn) ShowRecordMap() string {
 	var buffer bytes.Buffer
-	for k := range c.in.recordMap {
+	for k, v := range c.in.recordMap {
 		buffer.WriteString(k)
-		buffer.WriteString(";")
+		buffer.WriteString(":\n")
+		if v.typ == "SF" {
+			buffer.WriteString(hex.EncodeToString(v.payload))
+		}
+		if v.typ == "SR" {
+			buffer.WriteString(string(v.payload))
+		}
+		buffer.WriteString("\n")
 	}
 	return buffer.String()
 }
@@ -199,19 +206,21 @@ type halfConn struct {
 type recordMeta struct {
 	additionalData []byte
 	nonce          []byte
-	trafficSecret  []byte  // current TLS 1.3 traffic secret
-	seq            [8]byte // 64-bit sequence number
+	typ            string
+	// payload==SHTS, if typ==SF
+	// payload==plaintext, if typ==RS
+	payload []byte
 }
 
-func (hc *halfConn) setRecordMeta(hash string, ad, nonce, trafficSecret []byte, seq [8]byte) {
+func (hc *halfConn) setRecordMeta(ad, nonce, payload []byte, recordHash, typ string) {
 	if hc.recordMap == nil {
 		hc.recordMap = make(map[string]recordMeta)
 	}
-	hc.recordMap[hash] = recordMeta{
+	hc.recordMap[recordHash] = recordMeta{
 		additionalData: ad,
 		nonce:          nonce,
-		trafficSecret:  trafficSecret,
-		seq:            seq,
+		payload:        payload,
+		typ:            typ,
 	}
 }
 
@@ -367,12 +376,10 @@ type cbcMode interface {
 
 // decrypt authenticates and decrypts the record if protection is active at
 // this stage. The returned plaintext might overlap with the input.
-func (hc *halfConn) decrypt(record []byte) ([]byte, recordType, error) {
+func (hc *halfConn) decrypt(record []byte, handshakeComplete bool) ([]byte, recordType, error) {
 	var plaintext []byte
 	typ := recordType(record[0])
 	payload := record[recordHeaderLen:]
-
-	fmt.Println("record type:", typ)
 
 	// In TLS 1.3, change_cipher_spec messages are to be ignored without being
 	// decrypted. See RFC 8446, Appendix D.4.
@@ -410,24 +417,28 @@ func (hc *halfConn) decrypt(record []byte) ([]byte, recordType, error) {
 			}
 
 			var err error
-			fmt.Println("")
-			fmt.Println("record---:", hex.EncodeToString(payload))
-			fmt.Println("record...:", hex.EncodeToString(payload[:0]))
-			fmt.Println("additionalData:", hex.EncodeToString(additionalData))
-			fmt.Println("nonce:", hex.EncodeToString(nonce))
-			fmt.Println("")
-			fmt.Println("record hash:", hex.EncodeToString(Sum256(payload)))
-			recordHash := hex.EncodeToString(Sum256(payload))
-			fmt.Println("hc.trafficSecret:", hex.EncodeToString(hc.trafficSecret))
-			sample := make([]byte, 0)                                                     // same as // payload[:0]
-			plaintext, err = c.Open(sample, nonce, payload, additionalData)               // payload[:0]
-			hc.setRecordMeta(recordHash, additionalData, nonce, hc.trafficSecret, hc.seq) // make(map[string]float64)
-			fmt.Println("")
-			fmt.Println("plaintext:", hex.EncodeToString(plaintext))
-			fmt.Println("")
+			plaintext, err = c.Open(payload[:0], nonce, payload, additionalData)
 			if err != nil {
 				return nil, 0, alertBadRecordMAC
 			}
+
+			// capture decryption meta data to decrypt record containing SF
+			// traffictranscript is SHTS which can be disclosed safely in TLS1.3
+			if typ == recordTypeApplicationData {
+				if !handshakeComplete {
+					if bytes.Equal(plaintext[:3], []byte{20, 0, 0}) {
+
+						// found SF
+						hc.setRecordMeta(additionalData, nonce, hc.trafficSecret, hex.EncodeToString(Sum256(payload)), "SF")
+					}
+				}
+				if handshakeComplete {
+
+					// capture post handshake traffic (server response data)
+					hc.setRecordMeta(additionalData, nonce, payload, hex.EncodeToString(Sum256(payload)), "SR")
+				}
+			}
+
 		case cbcMode:
 			blockSize := c.BlockSize()
 			minPayload := explicitNonceLen + roundUp(hc.mac.Size()+1, blockSize)
@@ -720,7 +731,7 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 
 	// Process message.
 	record := c.rawInput.Next(recordHeaderLen + n)
-	data, typ, err := c.in.decrypt(record)
+	data, typ, err := c.in.decrypt(record, handshakeComplete)
 	if err != nil {
 		return c.in.setErrorLocked(c.sendAlert(err.(alert)))
 	}
