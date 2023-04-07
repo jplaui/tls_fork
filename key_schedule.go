@@ -7,6 +7,7 @@ package tls
 import (
 	"client/tls/ecdh"
 	"crypto/hmac"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash"
@@ -58,7 +59,10 @@ func (c *cipherSuiteTLS13) expandLabel(secret []byte, label string, context []by
 		panic(fmt.Errorf("failed to construct HKDF label: %s", err))
 	}
 	out := make([]byte, length)
+	fmt.Println("hkdfLabelBytes", hkdfLabelBytes)
+	fmt.Println("secret:", hex.EncodeToString(secret))
 	n, err := hkdf.Expand(c.hash.New, secret, hkdfLabelBytes).Read(out)
+	fmt.Println("out:", hex.EncodeToString(out))
 	if err != nil || n != length {
 		panic("tls: HKDF-Expand-Label invocation failed unexpectedly")
 	}

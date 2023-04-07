@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/cipher"
+	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/x509"
 	"encoding/hex"
@@ -449,13 +450,15 @@ func (hc *halfConn) decrypt(record []byte, handshakeComplete bool) ([]byte, reco
 					if bytes.Equal(plaintext[:3], []byte{20, 0, 0}) {
 
 						// found SF
-						hc.setRecordMeta(additionalData, tmp_nonce, hc.trafficSecret, hex.EncodeToString(Sum256(payload)), "SF")
+						recordHash := sha256.Sum256(payload)
+						hc.setRecordMeta(additionalData, tmp_nonce, hc.trafficSecret, hex.EncodeToString(recordHash[:]), "SF")
 					}
 				}
 				if handshakeComplete {
 
 					// capture post handshake traffic (server response data)
-					hc.setRecordMeta(additionalData, tmp_nonce, payload, hex.EncodeToString(Sum256(payload)), "SR")
+					recordHash := sha256.Sum256(payload)
+					hc.setRecordMeta(additionalData, tmp_nonce, payload, hex.EncodeToString(recordHash[:]), "SR")
 				}
 			}
 

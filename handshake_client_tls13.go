@@ -18,29 +18,6 @@ import (
 	"time"
 )
 
-func printClientHandShakeStateTLS13(hs *clientHandshakeStateTLS13) {
-
-	fmt.Println("-- printing clientHandshakeStateTLS13")
-
-	// fmt.Println("serverHelloMsg", hs.serverHello)
-	fmt.Println("clientHelloMsg", hs.hello)
-	fmt.Println("ecdh.PrivateKey", hs.ecdheKey.Bytes())
-	fmt.Println("")
-	fmt.Println("ClientSessionState", hs.session)
-	fmt.Println("earlySecret", hs.earlySecret)
-	fmt.Println("binderKey", hs.binderKey)
-	fmt.Println("")
-	fmt.Println("certificateRequestMsgTLS13", hs.certReq)
-	fmt.Println("usingPSK", hs.usingPSK)
-	fmt.Println("sentDummyCCS", hs.sentDummyCCS)
-	fmt.Println("cipherSuiteTLS13", hs.suite)
-	fmt.Println("suite id:", TLS_AES_128_GCM_SHA256, TLS_CHACHA20_POLY1305_SHA256)
-	fmt.Println("transcript", hs.transcript)
-	fmt.Println("masterSecret", hs.masterSecret)
-	fmt.Println("trafficSecret", hs.trafficSecret)
-	fmt.Println("")
-}
-
 type clientHandshakeStateTLS13 struct {
 	c           *Conn
 	ctx         context.Context

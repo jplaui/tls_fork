@@ -6,6 +6,7 @@ import (
 	"crypto/cipher"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"math/bits"
 )
 
@@ -154,6 +155,43 @@ func (d *digest) Reset() {
 	d.len = 0
 }
 
+func (d *digest) SetH(iv []byte, length uint64) {
+
+	// use default H if iv is empty
+	if len(iv) == 0 {
+		fmt.Println("iv==0")
+		d.h[0] = init0
+		d.h[1] = init1
+		d.h[2] = init2
+		d.h[3] = init3
+		d.h[4] = init4
+		d.h[5] = init5
+		d.h[6] = init6
+		d.h[7] = init7
+
+		d.nx = 0
+		d.len = 0
+	} else {
+		fmt.Println("iv != 0")
+
+		d.h[0] = binary.BigEndian.Uint32(iv[0:4])
+		d.h[1] = binary.BigEndian.Uint32(iv[4:8])
+		d.h[2] = binary.BigEndian.Uint32(iv[8:12])
+		d.h[3] = binary.BigEndian.Uint32(iv[12:16])
+		d.h[4] = binary.BigEndian.Uint32(iv[16:20])
+		d.h[5] = binary.BigEndian.Uint32(iv[20:24])
+		d.h[6] = binary.BigEndian.Uint32(iv[24:28])
+		d.h[7] = binary.BigEndian.Uint32(iv[28:32])
+
+		d.nx = 0
+		d.len = length
+
+	}
+
+	// d.nx = 0
+	// d.len = 0
+}
+
 func (d *digest) BlockSize() int { return BlockSize }
 
 func (d *digest) Write(p []byte) (nn int, err error) {
@@ -178,13 +216,6 @@ func (d *digest) Write(p []byte) (nn int, err error) {
 		d.nx = copy(d.x[:], p)
 	}
 	return
-}
-
-func (d *digest) Sum(in []byte) []byte {
-	// Make a copy of d so that caller can keep writing and summing.
-	d0 := *d
-	hash := d0.checkSum()
-	return append(in, hash[:]...)
 }
 
 func (d *digest) checkSum() [Size]byte {
@@ -220,6 +251,16 @@ func (d *digest) checkSum() [Size]byte {
 	binary.BigEndian.PutUint32(digest[24:], d.h[6])
 	binary.BigEndian.PutUint32(digest[28:], d.h[7])
 
+	fmt.Println("inside checksum")
+	fmt.Println("d.h[0]", d.h[0])
+	fmt.Println("d.h[1]", d.h[1])
+	fmt.Println("d.h[2]", d.h[2])
+	fmt.Println("d.h[3]", d.h[3])
+	fmt.Println("d.h[4]", d.h[4])
+	fmt.Println("d.h[5]", d.h[5])
+	fmt.Println("d.h[6]", d.h[6])
+	fmt.Println("d.h[7]", d.h[7])
+
 	return digest
 }
 
@@ -233,6 +274,59 @@ func Sum256(data []byte) []byte {
 	return hash[:]
 }
 
+// sum of merkle damgard shacal2 blockcipher
+// if iv=make([]byte, 0), then the default init values if H are used
+// if iv=make([]byte, x) with x›0, then H values are set to iv
+func SumMDShacal2(length uint64, iv, data []byte) ([]byte, []byte, uint64) {
+	var d digest
+	d.SetH(iv, length)
+	d.Write(data)
+
+	// get intermediate values:
+	var digest [Size]byte
+
+	binary.BigEndian.PutUint32(digest[0:], d.h[0])
+	binary.BigEndian.PutUint32(digest[4:], d.h[1])
+	binary.BigEndian.PutUint32(digest[8:], d.h[2])
+	binary.BigEndian.PutUint32(digest[12:], d.h[3])
+	binary.BigEndian.PutUint32(digest[16:], d.h[4])
+	binary.BigEndian.PutUint32(digest[20:], d.h[5])
+	binary.BigEndian.PutUint32(digest[24:], d.h[6])
+	binary.BigEndian.PutUint32(digest[28:], d.h[7])
+
+	tmp := d.len
+	fmt.Println("L before Sum:", d.len, d.nx)
+	// fmt.Println("sum:", d.Sum(nil))
+	hash := d.checkSum()
+	return hash[:], digest[:], tmp
+}
+
+func (d *digest) Sum(in []byte) []byte {
+	// Make a copy of d so that caller can keep writing and summing.
+	// fmt.Println("L before sum:", d.len, d.nx)
+	d0 := *d
+	hash := d0.checkSum()
+	return append(in, hash[:]...)
+}
+
+func XorOPad(data []byte) []byte {
+	opad := make([]byte, 64)
+	copy(opad, data)
+	for i := range opad {
+		opad[i] ^= 0x5c
+	}
+	return opad
+}
+
+func XorIPad(data []byte) []byte {
+	ipad := make([]byte, 64)
+	copy(ipad, data)
+	for i := range ipad {
+		ipad[i] ^= 0x36
+	}
+	return ipad
+}
+
 func NewSHA256() *digest {
 	d := new(digest)
 	d.Reset()
@@ -240,6 +334,7 @@ func NewSHA256() *digest {
 }
 
 func block(dig *digest, p []byte) {
+	fmt.Println("--- calling block ---")
 
 	var w [64]uint32
 	h0, h1, h2, h3, h4, h5, h6, h7 := dig.h[0], dig.h[1], dig.h[2], dig.h[3], dig.h[4], dig.h[5], dig.h[6], dig.h[7]
