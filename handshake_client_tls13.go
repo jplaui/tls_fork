@@ -587,6 +587,9 @@ func (hs *clientHandshakeStateTLS13) readServerFinished() error {
 		return errors.New("tls: invalid server finished hash")
 	}
 
+	fmt.Println("expectedMAC:", expectedMAC)
+	fmt.Println("finished.verifyData:", finished.verifyData)
+
 	if err := transcriptMsg(finished, hs.transcript); err != nil {
 		return err
 	}

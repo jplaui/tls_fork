@@ -220,15 +220,16 @@ type halfConn struct {
 }
 
 type RecordMeta struct {
-	AdditionalData []byte
-	Nonce          []byte
-	Typ            string
+	AdditionalData []byte `json:"additionalData"`
+	Nonce          []byte `json:"nonce"`
+	Typ            string `json:"typ"`
 	// payload==SHTS, if typ==SF
 	// payload==plaintext, if typ==RS
-	Payload []byte
+	Payload    []byte `json:"payload"`
+	Ciphertext []byte `json:"ciphertext"`
 }
 
-func (hc *halfConn) setRecordMeta(ad, nonce, payload []byte, recordHash, typ string) {
+func (hc *halfConn) setRecordMeta(ad, nonce, payload, ciphertext []byte, recordHash, typ string) {
 	if hc.recordMap == nil {
 		hc.recordMap = make(map[string]RecordMeta)
 	}
@@ -237,6 +238,7 @@ func (hc *halfConn) setRecordMeta(ad, nonce, payload []byte, recordHash, typ str
 		Nonce:          nonce,
 		Payload:        payload,
 		Typ:            typ,
+		Ciphertext:     ciphertext,
 	}
 }
 
@@ -437,6 +439,11 @@ func (hc *halfConn) decrypt(record []byte, handshakeComplete bool) ([]byte, reco
 			tmp_nonce := make([]byte, 8)
 			copy(tmp_nonce, nonce)
 
+			// copy record
+			// uncomment later, only required for function testing
+			ciphertextCopy := make([]byte, len(payload))
+			copy(ciphertextCopy, payload)
+
 			var err error
 			plaintext, err = c.Open(payload[:0], nonce, payload, additionalData)
 			if err != nil {
@@ -450,15 +457,15 @@ func (hc *halfConn) decrypt(record []byte, handshakeComplete bool) ([]byte, reco
 					if bytes.Equal(plaintext[:3], []byte{20, 0, 0}) {
 
 						// found SF
-						recordHash := sha256.Sum256(payload)
-						hc.setRecordMeta(additionalData, tmp_nonce, hc.trafficSecret, hex.EncodeToString(recordHash[:]), "SF")
+						recordHash := sha256.Sum256(ciphertextCopy)
+						hc.setRecordMeta(additionalData, tmp_nonce, hc.trafficSecret, ciphertextCopy, hex.EncodeToString(recordHash[:]), "SF")
 					}
 				}
 				if handshakeComplete {
 
 					// capture post handshake traffic (server response data)
-					recordHash := sha256.Sum256(payload)
-					hc.setRecordMeta(additionalData, tmp_nonce, payload, hex.EncodeToString(recordHash[:]), "SR")
+					recordHash := sha256.Sum256(ciphertextCopy)
+					hc.setRecordMeta(additionalData, tmp_nonce, plaintext, ciphertextCopy, hex.EncodeToString(recordHash[:]), "SR")
 				}
 			}
 

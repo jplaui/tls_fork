@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"encoding/binary"
 	"encoding/hex"
 	"math/bits"
@@ -77,14 +78,17 @@ func VDeriveSF(SHTS, H7, sfBytes []byte) bool {
 	}
 	c := cipherSuitesTLS13[0]
 
-	// derive sf MAC
-	// var transcript hash.Hash
-	transcript := c.hash.New()
-	transcript.Write(H7)
-	sfMac := c.finishedHash(SHTS, transcript)
+	// from finishedHash
+	finishedKey := c.expandLabel(SHTS, "finished", nil, c.hash.Size())
+	verifyData := hmac.New(c.hash.New, finishedKey)
+	verifyData.Write(H7)
+	sfMac := verifyData.Sum(nil)
+
+	// shrink plaintext to sf verify mac
+	sfBytesReduced := sfBytes[4 : len(sfMac)+4]
 
 	// compare
-	return reflect.DeepEqual(sfMac, sfBytes)
+	return reflect.DeepEqual(sfMac, sfBytesReduced)
 }
 
 // function to verify that SF ciphertext maps to SHTS and intermediateHashHSopad (public input to zk circuit)
@@ -98,12 +102,12 @@ func VSFtoPublicInput(ciphertext, H2, SHTS, nonce, additionalData, intermediateH
 		return false, err
 	}
 
+	// verify SHTS to public input of zk kdc circuit
+	ok2 := VVerifySHTS(intermediateHashHSopad, intermediateHashHSipad, H2, SHTS)
+
 	// derive SF from SHTS and check against plaintextSF
 	plaintextSFBytes, _ := hex.DecodeString(plaintextSF)
 	ok1 := VDeriveSF(SHTS, H7, plaintextSFBytes)
-
-	// verify SHTS to public input of zk kdc circuit
-	ok2 := VVerifySHTS(intermediateHashHSopad, intermediateHashHSipad, H2, SHTS)
 
 	// make sure both verifications work
 	ok := ok1 && ok2

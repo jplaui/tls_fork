@@ -2,7 +2,6 @@ package tls
 
 import (
 	"bytes"
-	"crypto"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -18,14 +17,14 @@ var VSFtoPublicInputData = []struct {
 	ciphertext, H2, SHTS, nonce, additionalData, intermediateHashHSipad, intermediateHashHSopad, H7 string
 }{
 	{
-		"",
-		"",
-		"",
-		"",
-		"",
-		"",
-		"",
-		"",
+		"2976a653ef8039d1ecae3113eb7b18cdcaaca29e9d027f8cf7fe774027b37f8eb9c1d7b3e9e7f18adfa9e39be0b63f635b0fab5ff9",
+		"ff259d4661d5506e0ad7514c876456c742e4f264fa15263e70079adb390b7e78",
+		"23352d6be62f8051e99c98259b5628cca583ec4f1edba6be4710770731eef84b",
+		"0000000000000003",
+		"1703030035",
+		"dee038e2b37ddb6e84b2bc9d3a9054f2851b5d1b37f57b48366eaabcb895a240",
+		"7c470a793fd5ef0124ad8b31ee2e1c27ba15684ed696728c4ea04bad7ebe38f9",
+		"760437ada955959745b54b877ed0a6bcbf8404c1292e61be5e49c273da19bf38",
 	},
 }
 
