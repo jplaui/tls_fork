@@ -2,6 +2,7 @@ package tls
 
 import (
 	"bytes"
+	"crypto"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -12,6 +13,48 @@ import (
 )
 
 // test key derivation
+
+var VSFtoPublicInputData = []struct {
+	ciphertext, H2, SHTS, nonce, additionalData, intermediateHashHSipad, intermediateHashHSopad, H7 string
+}{
+	{
+		"",
+		"",
+		"",
+		"",
+		"",
+		"",
+		"",
+		"",
+	},
+}
+
+func TestVSFtoPublicInput(t *testing.T) {
+	for _, test := range VSFtoPublicInputData {
+
+		// bytes
+		ciphertext, _ := hex.DecodeString(test.ciphertext)
+		H2, _ := hex.DecodeString(test.H2)
+		SHTS, _ := hex.DecodeString(test.SHTS)
+		nonce, _ := hex.DecodeString(test.nonce)
+		additionalData, _ := hex.DecodeString(test.additionalData)
+		intermediateHashHSipad, _ := hex.DecodeString(test.intermediateHashHSipad)
+		intermediateHashHSopad, _ := hex.DecodeString(test.intermediateHashHSopad)
+		H7, _ := hex.DecodeString(test.H7)
+
+		// call function to verify
+		ok, err := VSFtoPublicInput(ciphertext, H2, SHTS, nonce, additionalData, intermediateHashHSipad, intermediateHashHSopad, H7)
+		if err != nil {
+			t.Errorf("sf verification err: %x", err)
+			return
+		}
+
+		// check output
+		if !ok {
+			t.Errorf("sf verification to public input failed.")
+		}
+	}
+}
 
 // test HS to SHTS computation functions
 // took values from request/session.json
@@ -90,7 +133,7 @@ var testDataAES128GCM13 = []struct {
 	trafficSecret, nonce, ciphertext, additionalData, plaintext string
 }{
 	{
-		"349c87d5003e68d39e96426621fdd78e78b1ac6f35d1993e153be5365464cdc9",
+		"349c87d5003e68d39e96426621fdd78e78b1ac6f35d1993e153be5365464cdc9", // SHTS when decrypting SF
 		"0000000000000003",
 		"a72050f7d03b8bdf234c88712998bf035db9b2a0ec30cb52008edebed46781ccdca0f65b157d20b0ff3404a7363fed666114646b94",
 		"1703030035",

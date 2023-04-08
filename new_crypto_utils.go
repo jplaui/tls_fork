@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"math/bits"
+	"reflect"
 )
 
 ////////////////
@@ -48,6 +49,12 @@ func VDeriveSHTS(intermediateHashHSopad, SHTSin []byte) []byte {
 	return shtsPrime
 }
 
+func VVerifySHTS(intermediateHashHSopad, intermediateHashHSipad, H2, SHTS []byte) bool {
+	SHTSin := VDeriveSHTSin(intermediateHashHSipad, H2)
+	SHTSPrime := VDeriveSHTS(intermediateHashHSopad, SHTSin)
+	return reflect.DeepEqual(SHTSPrime, SHTS)
+}
+
 func GetSha256LabelTLS13(label string, transcript []byte) []byte {
 	var b bytes.Buffer
 	length := make([]byte, 2)
@@ -60,6 +67,49 @@ func GetSha256LabelTLS13(label string, transcript []byte) []byte {
 	b.Write(transcript)
 	b.Write([]byte{1})
 	return b.Bytes()
+}
+
+func VDeriveSF(SHTS, H7, sfBytes []byte) bool {
+
+	// catch cipher suite
+	var cipherSuitesTLS13 = []*cipherSuiteTLS13{
+		{TLS_AES_128_GCM_SHA256, 16, aeadAESGCMTLS13, crypto.SHA256},
+	}
+	c := cipherSuitesTLS13[0]
+
+	// derive sf MAC
+	// var transcript hash.Hash
+	transcript := c.hash.New()
+	transcript.Write(H7)
+	sfMac := c.finishedHash(SHTS, transcript)
+
+	// compare
+	return reflect.DeepEqual(sfMac, sfBytes)
+}
+
+// function to verify that SF ciphertext maps to SHTS and intermediateHashHSopad (public input to zk circuit)
+// prover sent all input arguments to the verifier who calls the function except the values:
+// ciphertext, H2
+func VSFtoPublicInput(ciphertext, H2, SHTS, nonce, additionalData, intermediateHashHSipad, intermediateHashHSopad, H7 []byte) (bool, error) {
+
+	// decrypt SF ciphertext
+	plaintextSF, err := DecryptAESGCM13(SHTS, nonce, ciphertext, additionalData)
+	if err != nil {
+		return false, err
+	}
+
+	// derive SF from SHTS and check against plaintextSF
+	plaintextSFBytes, _ := hex.DecodeString(plaintextSF)
+	ok1 := VDeriveSF(SHTS, H7, plaintextSFBytes)
+
+	// verify SHTS to public input of zk kdc circuit
+	ok2 := VVerifySHTS(intermediateHashHSopad, intermediateHashHSipad, H2, SHTS)
+
+	// make sure both verifications work
+	ok := ok1 && ok2
+
+	// return
+	return ok, nil
 }
 
 ////////////////
@@ -100,9 +150,9 @@ func DecryptAESGCM13(trafficSecret, nonce, ciphertext, additionalData []byte) (s
 	if err != nil {
 		return "", err
 	}
-	for i, b := range nonce {
-		ret.nonceMask[4+i] ^= b
-	}
+	// for i, b := range nonce {
+	// 	ret.nonceMask[4+i] ^= b
+	// }
 
 	return hex.EncodeToString(result), nil
 }

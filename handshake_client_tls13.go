@@ -578,6 +578,9 @@ func (hs *clientHandshakeStateTLS13) readServerFinished() error {
 	// fmt.Println("SF raw:", hex.EncodeToString(finished.raw[:]))
 	// fmt.Println("SF verifydata:", hex.EncodeToString(finished.verifyData[:]))
 
+	fmt.Println("verify SF, trafficSecret:", hex.EncodeToString(c.in.trafficSecret))
+	fmt.Println("verify SF, transcript Hash:", hex.EncodeToString(hs.transcript.Sum(nil)))
+
 	expectedMAC := hs.suite.finishedHash(c.in.trafficSecret, hs.transcript)
 	if !hmac.Equal(expectedMAC, finished.verifyData) {
 		c.sendAlert(alertDecryptError)
