@@ -1,16 +1,72 @@
 package tls
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/binary"
 	"encoding/hex"
-	"fmt"
 	"math/bits"
 )
 
-// AES GCM
+////////////////
+// KDC functions to compute intermediate hash values
+// check KDC PDF Fig 6. to see all values
+// functions starting with P are computed in postprocessing by the prover
+// functions starting with V are computed in postprocessing by the verifier
+////////////////
+
+// function in zk kdc scope
+// computes intermediate hash of HS xor opad input
+// since opad is 64 bytes, returned length=64 is publicly known
+func PIntermediateHashHSopad(HSBytes []byte) []byte {
+	HSopad := XorOPad(HSBytes)
+	IV := make([]byte, 0)
+	_, intermediateHashHSopad, _ := SumMDShacal2(0, IV, HSopad)
+	return intermediateHashHSopad
+}
+
+func PIntermediateHashHSipad(HSBytes []byte) []byte {
+	HSipad := XorIPad(HSBytes)
+	IV := make([]byte, 0)
+	_, intermediateHashHSipad, _ := SumMDShacal2(0, IV, HSipad)
+	return intermediateHashHSipad
+}
+
+func VDeriveSHTSin(intermediateHashHSipad, H2 []byte) []byte {
+	mH2 := GetSha256LabelTLS13(serverHandshakeTrafficLabel, H2)
+	SHTSin, _, _ := SumMDShacal2(64, intermediateHashHSipad, mH2)
+	return SHTSin
+}
+
+// returns SHTS.
+// does not require l_x because its known that both intermediate hashes have been computed with a 64 byte input,
+// thus no need to pass l_x cause its known to be 64.
+func VDeriveSHTS(intermediateHashHSopad, SHTSin []byte) []byte {
+	shtsPrime, _, _ := SumMDShacal2(64, intermediateHashHSopad, SHTSin)
+	return shtsPrime
+}
+
+func GetSha256LabelTLS13(label string, transcript []byte) []byte {
+	var b bytes.Buffer
+	length := make([]byte, 2)
+	binary.BigEndian.PutUint16(length, uint16(32))
+	b.Write(length)
+	tmp := "tls13 " + label
+	b.Write([]byte{byte(len(tmp))})
+	b.Write([]byte(tmp))
+	b.Write([]byte{byte(len(transcript))})
+	b.Write(transcript)
+	b.Write([]byte{1})
+	return b.Bytes()
+}
+
+////////////////
+// Test Functions
+////////////////
+
+// AES GCM verification functions
 func DecryptAESGCM13(trafficSecret, nonce, ciphertext, additionalData []byte) (string, error) {
 
 	var cipherSuitesTLS13 = []*cipherSuiteTLS13{
@@ -159,7 +215,6 @@ func (d *digest) SetH(iv []byte, length uint64) {
 
 	// use default H if iv is empty
 	if len(iv) == 0 {
-		fmt.Println("iv==0")
 		d.h[0] = init0
 		d.h[1] = init1
 		d.h[2] = init2
@@ -172,8 +227,6 @@ func (d *digest) SetH(iv []byte, length uint64) {
 		d.nx = 0
 		d.len = 0
 	} else {
-		fmt.Println("iv != 0")
-
 		d.h[0] = binary.BigEndian.Uint32(iv[0:4])
 		d.h[1] = binary.BigEndian.Uint32(iv[4:8])
 		d.h[2] = binary.BigEndian.Uint32(iv[8:12])
@@ -185,11 +238,7 @@ func (d *digest) SetH(iv []byte, length uint64) {
 
 		d.nx = 0
 		d.len = length
-
 	}
-
-	// d.nx = 0
-	// d.len = 0
 }
 
 func (d *digest) BlockSize() int { return BlockSize }
@@ -241,7 +290,6 @@ func (d *digest) checkSum() [Size]byte {
 	}
 
 	var digest [Size]byte
-
 	binary.BigEndian.PutUint32(digest[0:], d.h[0])
 	binary.BigEndian.PutUint32(digest[4:], d.h[1])
 	binary.BigEndian.PutUint32(digest[8:], d.h[2])
@@ -250,17 +298,6 @@ func (d *digest) checkSum() [Size]byte {
 	binary.BigEndian.PutUint32(digest[20:], d.h[5])
 	binary.BigEndian.PutUint32(digest[24:], d.h[6])
 	binary.BigEndian.PutUint32(digest[28:], d.h[7])
-
-	fmt.Println("inside checksum")
-	fmt.Println("d.h[0]", d.h[0])
-	fmt.Println("d.h[1]", d.h[1])
-	fmt.Println("d.h[2]", d.h[2])
-	fmt.Println("d.h[3]", d.h[3])
-	fmt.Println("d.h[4]", d.h[4])
-	fmt.Println("d.h[5]", d.h[5])
-	fmt.Println("d.h[6]", d.h[6])
-	fmt.Println("d.h[7]", d.h[7])
-
 	return digest
 }
 
@@ -295,8 +332,6 @@ func SumMDShacal2(length uint64, iv, data []byte) ([]byte, []byte, uint64) {
 	binary.BigEndian.PutUint32(digest[28:], d.h[7])
 
 	tmp := d.len
-	fmt.Println("L before Sum:", d.len, d.nx)
-	// fmt.Println("sum:", d.Sum(nil))
 	hash := d.checkSum()
 	return hash[:], digest[:], tmp
 }
@@ -334,7 +369,6 @@ func NewSHA256() *digest {
 }
 
 func block(dig *digest, p []byte) {
-	fmt.Println("--- calling block ---")
 
 	var w [64]uint32
 	h0, h1, h2, h3, h4, h5, h6, h7 := dig.h[0], dig.h[1], dig.h[2], dig.h[3], dig.h[4], dig.h[5], dig.h[6], dig.h[7]

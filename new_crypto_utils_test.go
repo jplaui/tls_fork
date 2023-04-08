@@ -35,7 +35,7 @@ func TestSumMDShacal2(t *testing.T) {
 
 		t.Log("shtsBytes:", shtsBytes)
 
-		// label
+		// label to generate mH2
 		var label bytes.Buffer
 		length := make([]byte, 2)
 		binary.BigEndian.PutUint16(length, uint16(32))
@@ -46,11 +46,7 @@ func TestSumMDShacal2(t *testing.T) {
 		label.Write([]byte{byte(len(H2Bytes))})
 		label.Write(H2Bytes)
 		label.Write([]byte{1})
-
-		// t.Log("label.Bytes()", label.Bytes())
-
-		// taken from tls fork
-		// shtlBytes, _ := hex.DecodeString(serverHandshakeTrafficLabel) // shtl="s hs traffic"
+		mH2 := label.Bytes()
 
 		// xor HS with ipad
 		HSipad := XorIPad(HSBytes)
@@ -60,26 +56,24 @@ func TestSumMDShacal2(t *testing.T) {
 		IV := make([]byte, 0)
 
 		// prover compute, should not require padding
-		hHSipad, intermediateHash, l := SumMDShacal2(0, IV, HSipad)
+		hHSipad, intermediateHashHSipad, l := SumMDShacal2(0, IV, HSipad)
 		fmt.Println("hHSipad:", hHSipad)
 
-		// mH2
-		mH2 := label.Bytes()
 		// mH2 := append(label.Bytes(), H2Bytes...)
 
 		// verifier compute
 		fmt.Println("writing to sha256:", mH2)
-		SHTSin, _, _ := SumMDShacal2(l, intermediateHash, mH2)
+		SHTSin, _, _ := SumMDShacal2(l, intermediateHashHSipad, mH2)
 		fmt.Println("SHTSin:", SHTSin)
 
 		// these values must be computed in zk such that it can be used on the verifier side to compute SHTS, and with that check SF
 		// xor HS with opad
 		HSopad := XorOPad(HSBytes)
-		// fmt.Println("opad:", HSopad)
-		hHSopad, intermediateHash, l := SumMDShacal2(0, IV, HSopad)
+		fmt.Println("opad:", HSopad)
+		_, intermediateHashHSopad, l := SumMDShacal2(0, IV, HSopad) // final hash is hHSopad
 
-		t.Log("size hHSopad", hHSopad)
-		shtsPrime, _, _ := SumMDShacal2(l, intermediateHash, SHTSin)
+		shtsPrime, _, _ := SumMDShacal2(l, intermediateHashHSopad, SHTSin)
+		t.Log("shtsPrime:", shtsPrime)
 
 		// assert equal
 		if !reflect.DeepEqual(shtsPrime, shtsBytes) {
