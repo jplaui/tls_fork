@@ -19,6 +19,104 @@ import (
 // functions starting with V are computed in postprocessing by the verifier
 ////////////////
 
+// functions for key, iv derivation
+func ZKIntermediateHashHSopad(HS []byte) []byte {
+	HSopad := XorOPad(HS)
+	IV := make([]byte, 0)
+	_, intermediateHashHSopad, _ := SumMDShacal2(0, IV, HSopad)
+	return intermediateHashHSopad
+}
+
+func VIntermediateHashdHSin(intermediateHashHSipad []byte) []byte {
+	emptyStringBytes, _ := hex.DecodeString("")
+	h0 := Sum256(emptyStringBytes)
+	mH0 := GetSha256LabelTLS13("derived", h0)
+	intermediateHashdHSin, _, _ := SumMDShacal2(64, intermediateHashHSipad, mH0)
+	return intermediateHashdHSin
+}
+
+func ZKdHS(intermediateHashHSopad, intermediateHashdHSin []byte) []byte {
+	dHS, _, _ := SumMDShacal2(64, intermediateHashHSopad, intermediateHashdHSin)
+	return dHS
+}
+
+func PIntermediateHashdHSipad(dHS []byte) []byte {
+	dHSipad := XorIPad(dHS)
+	IV := make([]byte, 0)
+	_, intermediateHashdHSipad, _ := SumMDShacal2(0, IV, dHSipad)
+	return intermediateHashdHSipad
+}
+
+func VMSin(intermediateHashdHSipad []byte) []byte {
+	MSin, _, _ := SumMDShacal2(64, intermediateHashdHSipad, []byte{0})
+	return MSin
+}
+
+func ZKMS(dHS, MSin []byte) []byte {
+	dHSopad := XorOPad(dHS)
+	IV := make([]byte, 0)
+	_, opadHash, _ := SumMDShacal2(0, IV, dHSopad)
+	MS, _, _ := SumMDShacal2(64, opadHash, MSin)
+	return MS
+}
+
+func PIntermediateHashMSipad(MS []byte) []byte {
+	MSipad := XorIPad(MS)
+	IV := make([]byte, 0)
+	_, intermediateHashMSipad, _ := SumMDShacal2(0, IV, MSipad)
+	return intermediateHashMSipad
+}
+
+func VSATSin(intermediateHashMSipad, H3 []byte) []byte {
+	mH3 := GetSha256LabelTLS13("s ap traffic", H3)
+	SATSin, _, _ := SumMDShacal2(64, intermediateHashMSipad, mH3)
+	return SATSin
+}
+
+func ZKSATS(MS, SATSin []byte) []byte {
+	MSopad := XorOPad(MS)
+	IV := make([]byte, 0)
+	_, opadHash, _ := SumMDShacal2(0, IV, MSopad)
+	SATS, _, _ := SumMDShacal2(64, opadHash, SATSin)
+	return SATS
+}
+
+func PIntermediateHashSATSipad(SATS []byte) []byte {
+	SATSipad := XorIPad(SATS)
+	IV := make([]byte, 0)
+	_, intermediateHashSATSipad, _ := SumMDShacal2(0, IV, SATSipad)
+	return intermediateHashSATSipad
+}
+
+func VtkSAPPin(intermediateHashSATSipad []byte) []byte {
+	mk, _ := hex.DecodeString("key")
+	tkSAPPin, _, _ := SumMDShacal2(64, intermediateHashSATSipad, mk)
+	return tkSAPPin
+}
+
+func ZKIntermediateHashSATSopad(SATS []byte) []byte {
+	SATSopad := XorOPad(SATS)
+	IV := make([]byte, 0)
+	_, intermediateHashSATSopad, _ := SumMDShacal2(0, IV, SATSopad)
+	return intermediateHashSATSopad
+}
+
+func ZKtkSAPP(intermediateHashSATSopad, tkSAPPin []byte) []byte {
+	tkSAPP, _, _ := SumMDShacal2(64, intermediateHashSATSopad, tkSAPPin)
+	return tkSAPP
+}
+
+func VIVin(intermediateHashSATSipad []byte) []byte {
+	miv, _ := hex.DecodeString("iv")
+	IVin, _, _ := SumMDShacal2(64, intermediateHashSATSipad, miv)
+	return IVin
+}
+
+func PIV(intermediateHashSATSopad, IVin []byte) []byte {
+	IV, _, _ := SumMDShacal2(64, intermediateHashSATSopad, IVin)
+	return IV
+}
+
 // function in zk kdc scope
 // computes intermediate hash of HS xor opad input
 // since opad is 64 bytes, returned length=64 is publicly known
