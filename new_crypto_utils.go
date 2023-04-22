@@ -27,12 +27,23 @@ func ZKIntermediateHashHSopad(HS []byte) []byte {
 	return intermediateHashHSopad
 }
 
-func VIntermediateHashdHSin(intermediateHashHSipad []byte) []byte {
+func PSHTSin(intermediateHashHSipad, H2 []byte) []byte {
+	mH2 := GetSha256LabelTLS13("s hs traffic", H2, 32)
+	SHTSin, _, _ := SumMDShacal2(64, intermediateHashHSipad, mH2)
+	return SHTSin
+}
+
+func VSHTS(intermediateHashHSopad, SHTSin []byte) []byte {
+	SHTS, _, _ := SumMDShacal2(64, intermediateHashHSopad, SHTSin)
+	return SHTS
+}
+
+func PdHSin(intermediateHashHSipad []byte) []byte {
 	emptyStringBytes, _ := hex.DecodeString("")
 	h0 := Sum256(emptyStringBytes)
 	mH0 := GetSha256LabelTLS13("derived", h0, 32)
-	intermediateHashdHSin, _, _ := SumMDShacal2(64, intermediateHashHSipad, mH0)
-	return intermediateHashdHSin
+	dHSin, _, _ := SumMDShacal2(64, intermediateHashHSipad, mH0)
+	return dHSin
 }
 
 func ZKdHS(intermediateHashHSopad, intermediateHashdHSin []byte) []byte {
@@ -74,47 +85,47 @@ func VXATSin(intermediateHashMSipad, H3 []byte, label string) []byte {
 	return SATSin
 }
 
-func ZKXATS(MS, SATSin []byte) []byte {
+func ZKXATS(MS, XATSin []byte) []byte {
 	MSopad := XorOPad(MS)
 	IV := make([]byte, 0)
 	_, opadHash, _ := SumMDShacal2(0, IV, MSopad)
-	SATS, _, _ := SumMDShacal2(64, opadHash, SATSin)
-	return SATS
+	XATS, _, _ := SumMDShacal2(64, opadHash, XATSin)
+	return XATS
 }
 
-func PIntermediateHashSATSipad(SATS []byte) []byte {
-	SATSipad := XorIPad(SATS)
+func PIntermediateHashXATSipad(XATS []byte) []byte {
+	XATSipad := XorIPad(XATS)
 	IV := make([]byte, 0)
-	_, intermediateHashSATSipad, _ := SumMDShacal2(0, IV, SATSipad)
-	return intermediateHashSATSipad
+	_, intermediateHashXATSipad, _ := SumMDShacal2(0, IV, XATSipad)
+	return intermediateHashXATSipad
 }
 
-func VtkSAPPin(intermediateHashSATSipad []byte) []byte {
+func VTkXAPPin(intermediateHashXATSipad []byte) []byte {
 	mk := GetSha256LabelTLS13("key", nil, 16)
-	tkSAPPin, _, _ := SumMDShacal2(64, intermediateHashSATSipad, mk)
-	return tkSAPPin
+	tkXAPPin, _, _ := SumMDShacal2(64, intermediateHashXATSipad, mk)
+	return tkXAPPin
 }
 
-func ZKIntermediateHashSATSopad(SATS []byte) []byte {
+func ZKIntermediateHashXATSopad(SATS []byte) []byte {
 	SATSopad := XorOPad(SATS)
 	IV := make([]byte, 0)
-	_, intermediateHashSATSopad, _ := SumMDShacal2(0, IV, SATSopad)
-	return intermediateHashSATSopad
+	_, intermediateHashXATSopad, _ := SumMDShacal2(0, IV, SATSopad)
+	return intermediateHashXATSopad
 }
 
-func ZKtkSAPP(intermediateHashSATSopad, tkSAPPin []byte) []byte {
-	tkSAPP, _, _ := SumMDShacal2(64, intermediateHashSATSopad, tkSAPPin)
+func ZKtkXAPP(intermediateHashXATSopad, tkSAPPin []byte) []byte {
+	tkSAPP, _, _ := SumMDShacal2(64, intermediateHashXATSopad, tkSAPPin)
 	return tkSAPP[:16]
 }
 
-func VIVin(intermediateHashSATSipad []byte) []byte {
+func VIVin(intermediateHashXATSipad []byte) []byte {
 	miv := GetSha256LabelTLS13("iv", nil, 12)
-	IVin, _, _ := SumMDShacal2(64, intermediateHashSATSipad, miv)
+	IVin, _, _ := SumMDShacal2(64, intermediateHashXATSipad, miv)
 	return IVin
 }
 
-func PIV(intermediateHashSATSopad, IVin []byte) []byte {
-	IV, _, _ := SumMDShacal2(64, intermediateHashSATSopad, IVin)
+func PIV(intermediateHashXATSopad, IVin []byte) []byte {
+	IV, _, _ := SumMDShacal2(64, intermediateHashXATSopad, IVin)
 	return IV[:12]
 }
 
