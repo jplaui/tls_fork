@@ -19,6 +19,31 @@ import (
 // functions starting with V are computed in postprocessing by the verifier
 ////////////////
 
+// kdc functions to compute required public input
+func VIVin(intermediateHashXATSipad []byte) []byte {
+	miv := GetSha256LabelTLS13("iv", nil, 12)
+	IVin, _, _ := SumMDShacal2(64, intermediateHashXATSipad, miv)
+	return IVin
+}
+
+func VTkXAPPin(intermediateHashXATSipad []byte) []byte {
+	mk := GetSha256LabelTLS13("key", nil, 16)
+	tkXAPPin, _, _ := SumMDShacal2(64, intermediateHashXATSipad, mk)
+	return tkXAPPin
+}
+
+func VXATSin(intermediateHashMSipad, H3 []byte, label string) []byte {
+	mH3 := GetSha256LabelTLS13(label, H3, 32)
+	SATSin, _, _ := SumMDShacal2(64, intermediateHashMSipad, mH3)
+	return SATSin
+}
+
+func VMSin(intermediateHashdHSipad []byte) []byte {
+	zeros := make([]byte, 32)
+	MSin, _, _ := SumMDShacal2(64, intermediateHashdHSipad, zeros) // 0 input
+	return MSin
+}
+
 // function in zk kdc scope
 // computes intermediate hash of HS xor opad input
 // since opad is 64 bytes, returned length=64 is publicly known
@@ -37,7 +62,7 @@ func PIntermediateHashHSipad(HSBytes []byte) []byte {
 }
 
 func VDeriveSHTSin(intermediateHashHSipad, H2 []byte) []byte {
-	mH2 := GetSha256LabelTLS13(serverHandshakeTrafficLabel, H2)
+	mH2 := GetSha256LabelTLS13(serverHandshakeTrafficLabel, H2, 32)
 	SHTSin, _, _ := SumMDShacal2(64, intermediateHashHSipad, mH2)
 	return SHTSin
 }
@@ -50,16 +75,21 @@ func VDeriveSHTS(intermediateHashHSopad, SHTSin []byte) []byte {
 	return shtsPrime
 }
 
-func VVerifySHTS(intermediateHashHSopad, intermediateHashHSipad, H2, SHTS []byte) bool {
+func VVerifySHTS(intermediateHashHSopad, shtsIn, SHTS []byte) bool {
+	SHTSPrime := VDeriveSHTS(intermediateHashHSopad, shtsIn)
+	return reflect.DeepEqual(SHTSPrime, SHTS)
+}
+
+func VVerifySHTSold(intermediateHashHSopad, intermediateHashHSipad, H2, SHTS []byte) bool {
 	SHTSin := VDeriveSHTSin(intermediateHashHSipad, H2)
 	SHTSPrime := VDeriveSHTS(intermediateHashHSopad, SHTSin)
 	return reflect.DeepEqual(SHTSPrime, SHTS)
 }
 
-func GetSha256LabelTLS13(label string, transcript []byte) []byte {
+func GetSha256LabelTLS13(label string, transcript []byte, size int) []byte {
 	var b bytes.Buffer
 	length := make([]byte, 2)
-	binary.BigEndian.PutUint16(length, uint16(32))
+	binary.BigEndian.PutUint16(length, uint16(size))
 	b.Write(length)
 	tmp := "tls13 " + label
 	b.Write([]byte{byte(len(tmp))})
@@ -103,7 +133,7 @@ func VSFtoPublicInput(ciphertext, H2, SHTS, nonce, additionalData, intermediateH
 	}
 
 	// verify SHTS to public input of zk kdc circuit
-	ok2 := VVerifySHTS(intermediateHashHSopad, intermediateHashHSipad, H2, SHTS)
+	ok2 := VVerifySHTSold(intermediateHashHSopad, intermediateHashHSipad, H2, SHTS)
 
 	// derive SF from SHTS and check against plaintextSF
 	plaintextSFBytes, _ := hex.DecodeString(plaintextSF)
