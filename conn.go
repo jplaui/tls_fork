@@ -287,6 +287,8 @@ func (hc *halfConn) changeCipherSpec() error {
 func (hc *halfConn) setTrafficSecret(suite *cipherSuiteTLS13, secret []byte) {
 	hc.trafficSecret = secret
 	key, iv := suite.trafficKey(secret)
+	fmt.Println("key:", hex.EncodeToString(key))
+	fmt.Println("iv:", hex.EncodeToString(iv))
 	hc.cipher = suite.aead(key, iv)
 	for i := range hc.seq {
 		hc.seq[i] = 0

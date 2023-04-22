@@ -30,7 +30,7 @@ func ZKIntermediateHashHSopad(HS []byte) []byte {
 func VIntermediateHashdHSin(intermediateHashHSipad []byte) []byte {
 	emptyStringBytes, _ := hex.DecodeString("")
 	h0 := Sum256(emptyStringBytes)
-	mH0 := GetSha256LabelTLS13("derived", h0)
+	mH0 := GetSha256LabelTLS13("derived", h0, 32)
 	intermediateHashdHSin, _, _ := SumMDShacal2(64, intermediateHashHSipad, mH0)
 	return intermediateHashdHSin
 }
@@ -48,7 +48,8 @@ func PIntermediateHashdHSipad(dHS []byte) []byte {
 }
 
 func VMSin(intermediateHashdHSipad []byte) []byte {
-	MSin, _, _ := SumMDShacal2(64, intermediateHashdHSipad, []byte{0})
+	zeros := make([]byte, 32)
+	MSin, _, _ := SumMDShacal2(64, intermediateHashdHSipad, zeros) // 0 input
 	return MSin
 }
 
@@ -67,13 +68,13 @@ func PIntermediateHashMSipad(MS []byte) []byte {
 	return intermediateHashMSipad
 }
 
-func VSATSin(intermediateHashMSipad, H3 []byte) []byte {
-	mH3 := GetSha256LabelTLS13("s ap traffic", H3)
+func VXATSin(intermediateHashMSipad, H3 []byte, label string) []byte {
+	mH3 := GetSha256LabelTLS13(label, H3, 32)
 	SATSin, _, _ := SumMDShacal2(64, intermediateHashMSipad, mH3)
 	return SATSin
 }
 
-func ZKSATS(MS, SATSin []byte) []byte {
+func ZKXATS(MS, SATSin []byte) []byte {
 	MSopad := XorOPad(MS)
 	IV := make([]byte, 0)
 	_, opadHash, _ := SumMDShacal2(0, IV, MSopad)
@@ -89,7 +90,7 @@ func PIntermediateHashSATSipad(SATS []byte) []byte {
 }
 
 func VtkSAPPin(intermediateHashSATSipad []byte) []byte {
-	mk, _ := hex.DecodeString("key")
+	mk := GetSha256LabelTLS13("key", nil, 16)
 	tkSAPPin, _, _ := SumMDShacal2(64, intermediateHashSATSipad, mk)
 	return tkSAPPin
 }
@@ -103,18 +104,18 @@ func ZKIntermediateHashSATSopad(SATS []byte) []byte {
 
 func ZKtkSAPP(intermediateHashSATSopad, tkSAPPin []byte) []byte {
 	tkSAPP, _, _ := SumMDShacal2(64, intermediateHashSATSopad, tkSAPPin)
-	return tkSAPP
+	return tkSAPP[:16]
 }
 
 func VIVin(intermediateHashSATSipad []byte) []byte {
-	miv, _ := hex.DecodeString("iv")
+	miv := GetSha256LabelTLS13("iv", nil, 12)
 	IVin, _, _ := SumMDShacal2(64, intermediateHashSATSipad, miv)
 	return IVin
 }
 
 func PIV(intermediateHashSATSopad, IVin []byte) []byte {
 	IV, _, _ := SumMDShacal2(64, intermediateHashSATSopad, IVin)
-	return IV
+	return IV[:12]
 }
 
 // function in zk kdc scope
@@ -135,7 +136,7 @@ func PIntermediateHashHSipad(HSBytes []byte) []byte {
 }
 
 func VDeriveSHTSin(intermediateHashHSipad, H2 []byte) []byte {
-	mH2 := GetSha256LabelTLS13(serverHandshakeTrafficLabel, H2)
+	mH2 := GetSha256LabelTLS13(serverHandshakeTrafficLabel, H2, 32)
 	SHTSin, _, _ := SumMDShacal2(64, intermediateHashHSipad, mH2)
 	return SHTSin
 }
@@ -154,10 +155,10 @@ func VVerifySHTS(intermediateHashHSopad, intermediateHashHSipad, H2, SHTS []byte
 	return reflect.DeepEqual(SHTSPrime, SHTS)
 }
 
-func GetSha256LabelTLS13(label string, transcript []byte) []byte {
+func GetSha256LabelTLS13(label string, transcript []byte, size int) []byte {
 	var b bytes.Buffer
 	length := make([]byte, 2)
-	binary.BigEndian.PutUint16(length, uint16(32))
+	binary.BigEndian.PutUint16(length, uint16(size))
 	b.Write(length)
 	tmp := "tls13 " + label
 	b.Write([]byte{byte(len(tmp))})
