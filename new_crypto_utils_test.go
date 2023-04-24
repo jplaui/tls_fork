@@ -207,3 +207,25 @@ func TestSum256(t *testing.T) {
 
 	t.Log("sha256 test passed.")
 }
+
+func TestZKdHS(t *testing.T) {
+
+	intermediateHashHSopadString := "4b666cdc720a74082b1594c95367f3c71f5124db03add4877e959c6c50c7e3b5"
+	dHSinString := "3352927e78c6f8ff6e09a9cdbd13f22f94467f85316bb1d4be826c449d2c7f9f"
+	dHSString := "d453d0c19ab5e562b3de0cf6a0769d75fecd3a5b2f578ac9d492b73a8cfa0c3a"
+
+	intermediateHashHSopad, _ := hex.DecodeString(intermediateHashHSopadString)
+	dHSin, _ := hex.DecodeString(dHSinString)
+	dHSexpected, _ := hex.DecodeString(dHSString)
+
+	// its a shacal2 l=64 example
+	// calls block only once
+	//
+	dHS := ZKdHS(intermediateHashHSopad, dHSin)
+	t.Log("dHS:", dHS, hex.EncodeToString(dHS))
+	if !reflect.DeepEqual(dHS, dHSexpected) {
+		t.Errorf("dHS compute failed.")
+		return
+	}
+	// t.Log(hex.EncodeToString(dHS))
+}

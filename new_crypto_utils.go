@@ -8,6 +8,7 @@ import (
 	"crypto/hmac"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"math/bits"
 	"reflect"
 )
@@ -46,8 +47,8 @@ func PdHSin(intermediateHashHSipad []byte) []byte {
 	return dHSin
 }
 
-func ZKdHS(intermediateHashHSopad, intermediateHashdHSin []byte) []byte {
-	dHS, _, _ := SumMDShacal2(64, intermediateHashHSopad, intermediateHashdHSin)
+func ZKdHS(intermediateHashHSopad, dHSin []byte) []byte {
+	dHS, _, _ := SumMDShacal2(64, intermediateHashHSopad, dHSin)
 	return dHS
 }
 
@@ -410,22 +411,28 @@ func (d *digest) BlockSize() int { return BlockSize }
 func (d *digest) Write(p []byte) (nn int, err error) {
 
 	nn = len(p)
+	fmt.Println("len(dHSin)=nn", nn)
 	d.len += uint64(nn)
+	fmt.Println("dlen:", d.len)
 	if d.nx > 0 {
+		fmt.Println("in here 1")
 		n := copy(d.x[d.nx:], p)
 		d.nx += n
 		if d.nx == chunk {
+			fmt.Println("hex dHSin:", hex.EncodeToString(d.x[:]), len(hex.EncodeToString(d.x[:]))/2)
 			block(d, d.x[:])
 			d.nx = 0
 		}
 		p = p[n:]
 	}
 	if len(p) >= chunk {
+		fmt.Println("in here 2")
 		n := len(p) &^ (chunk - 1)
 		block(d, p[:n])
 		p = p[n:]
 	}
 	if len(p) > 0 {
+		fmt.Println("in here 3")
 		d.nx = copy(d.x[:], p)
 	}
 	return
@@ -433,6 +440,8 @@ func (d *digest) Write(p []byte) (nn int, err error) {
 
 func (d *digest) checkSum() [Size]byte {
 	len := d.len
+
+	fmt.Println("final len:", len)
 	// Padding. Add a 1 bit and 0 bits until 56 bytes mod 64.
 	var tmp [64 + 8]byte // padding + length buffer
 	tmp[0] = 0x80
