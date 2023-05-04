@@ -10,7 +10,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/cipher"
-	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/x509"
 	"encoding/hex"
@@ -221,21 +220,17 @@ type halfConn struct {
 
 type RecordMeta struct {
 	AdditionalData []byte `json:"additionalData"`
-	Nonce          []byte `json:"nonce"`
 	Typ            string `json:"typ"`
-	// payload==SHTS, if typ==SF
-	// payload==plaintext, if typ==RS
-	Payload    []byte `json:"payload"`
-	Ciphertext []byte `json:"ciphertext"`
+	Payload        []byte `json:"payload"`
+	Ciphertext     []byte `json:"ciphertext"`
 }
 
-func (hc *halfConn) setRecordMeta(ad, nonce, payload, ciphertext []byte, recordHash, typ string) {
+func (hc *halfConn) setRecordMeta(ad, payload, ciphertext, nonce []byte, typ string) {
 	if hc.recordMap == nil {
 		hc.recordMap = make(map[string]RecordMeta)
 	}
-	hc.recordMap[recordHash] = RecordMeta{
+	hc.recordMap[hex.EncodeToString(nonce)] = RecordMeta{
 		AdditionalData: ad,
-		Nonce:          nonce,
 		Payload:        payload,
 		Typ:            typ,
 		Ciphertext:     ciphertext,
@@ -287,8 +282,8 @@ func (hc *halfConn) changeCipherSpec() error {
 func (hc *halfConn) setTrafficSecret(suite *cipherSuiteTLS13, secret []byte) {
 	hc.trafficSecret = secret
 	key, iv := suite.trafficKey(secret)
-	fmt.Println("key:", hex.EncodeToString(key))
-	fmt.Println("iv:", hex.EncodeToString(iv))
+	// fmt.Println("key:", hex.EncodeToString(key))
+	// fmt.Println("iv:", hex.EncodeToString(iv))
 	hc.cipher = suite.aead(key, iv)
 	for i := range hc.seq {
 		hc.seq[i] = 0
@@ -459,15 +454,15 @@ func (hc *halfConn) decrypt(record []byte, handshakeComplete bool) ([]byte, reco
 					if bytes.Equal(plaintext[:3], []byte{20, 0, 0}) {
 
 						// found SF
-						recordHash := sha256.Sum256(ciphertextCopy)
-						hc.setRecordMeta(additionalData, tmp_nonce, hc.trafficSecret, ciphertextCopy, hex.EncodeToString(recordHash[:]), "SF")
+						// recordHash := sha256.Sum256(ciphertextCopy)
+						// hc.setRecordMeta(additionalData, tmp_nonce, hc.trafficSecret, ciphertextCopy, hex.EncodeToString(recordHash[:]), "SF")
+						hc.setRecordMeta(additionalData, hc.trafficSecret, ciphertextCopy, tmp_nonce, "SF")
 					}
 				}
 				if handshakeComplete {
 
 					// capture post handshake traffic (server response data)
-					recordHash := sha256.Sum256(ciphertextCopy)
-					hc.setRecordMeta(additionalData, tmp_nonce, plaintext, ciphertextCopy, hex.EncodeToString(recordHash[:]), "SR")
+					hc.setRecordMeta(additionalData, plaintext, ciphertextCopy, tmp_nonce, "SR")
 				}
 			}
 
