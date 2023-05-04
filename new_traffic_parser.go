@@ -9,6 +9,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash"
@@ -556,6 +557,94 @@ func (td *TrafficData) ParseFinishedMsg() error {
 	}
 	td.finished = finished
 	return nil
+}
+
+func (td *TrafficData) ParseRecordData() (map[string]map[string]string, error) {
+
+	// reset sequence counter for record layer traffic
+	for i := range td.seq {
+		td.seq[i] = 0
+	}
+
+	// init return data structure
+	recordPerSequence := make(map[string]map[string]string)
+
+	// stop when done parsing chunks
+	for {
+
+		// stop criteria
+		if td.rawInput.Len() <= 0 {
+			log.Debug().Msg("done parsing record layer")
+			break
+		}
+		handshakeComplete := td.handshakeComplete
+
+		td.input.Reset()
+
+		hdr := td.rawInput.Bytes()[:recordHeaderLen]
+		typ := recordType(hdr[0])
+
+		// No valid TLS record has a type of 0x80, however SSLv2 handshakes
+		// start with a uint16 length where the MSB is set and the first record
+		// is always < 256 bytes long. Therefore typ == 0x80 strongly suggests
+		// an SSLv2 client.
+		if !handshakeComplete && typ == 0x80 {
+			log.Debug().Msg("tls parser: unsupported SSLv2 handshake received\n")
+			// log.Fatalf("tls parser: unsupported SSLv2 handshake received\n")
+			return nil, alertProtocolVersion
+		}
+
+		//vers := uint16(hdr[1])<<8 | uint16(hdr[2])
+		n := int(hdr[3])<<8 | int(hdr[4])
+
+		if n > maxCiphertextTLS13 {
+			log.Debug().Msg("tls parser: oversized record received with length")
+			// log.Fatalf("tls parser: oversized record received with length %d", n)
+			return nil, alertRecordOverflow
+		}
+
+		record := td.rawInput.Next(recordHeaderLen + n)
+
+		// inside decrypt
+		// typ := recordType(record[0])
+		payload := record[recordHeaderLen:]
+
+		explicitNonceLen := 0
+
+		if len(payload) < explicitNonceLen {
+			break
+		}
+		nonce := payload[:explicitNonceLen]
+		if len(nonce) == 0 {
+			nonce = td.seq[:]
+		}
+		payload = payload[explicitNonceLen:]
+
+		// payload = payload[explicitNonceLen:]
+		additionalData := record[:recordHeaderLen]
+
+		// outside decrypt
+		td.input.Reset()
+
+		// record data
+		jsonData := make(map[string]string)
+
+		// fmt.Println("======record======")
+		// fmt.Println("payload:", hex.EncodeToString(payload), len(hex.EncodeToString(payload))/32)
+		// fmt.Println("recordHeaderLen:", recordHeaderLen)
+		// fmt.Println("nonce:", hex.EncodeToString(nonce))
+		// fmt.Println("additionalData:", hex.EncodeToString(additionalData))
+
+		jsonData["ciphertext"] = hex.EncodeToString(payload)
+		jsonData["additionalData"] = hex.EncodeToString(additionalData)
+		recordPerSequence[hex.EncodeToString(nonce)] = jsonData
+
+		// increment record sequence counter
+		td.incSeq()
+	}
+
+	return recordPerSequence, nil
+
 }
 
 ////////////////////
