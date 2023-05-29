@@ -5,11 +5,8 @@ import (
 	"client/tls_fork/ecdh"
 	"client/tls_fork/internal/nistec"
 	"crypto/elliptic"
-	"encoding/hex"
 	"errors"
 	"fmt"
-
-	"go.dedis.ch/kyber/v4/suites"
 )
 
 func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serverHelloMsg, clientKey *ecdh.PrivateKey) error {
@@ -20,8 +17,9 @@ func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serve
 
 	// pskSuite := cipherSuiteTLS13ByID(hs.session.cipherSuite) // cipherSuite uint16
 
-	// check server key
-	// fmt.Println("curve:", clientKey.Curve())
+	// ecdh package does not provide direct access to computing with elliptic curves
+	// thus, using elliptic package to get further access to add, mul, etc...
+	// get curveID
 	curveID, ok1 := curveIDForCurve(clientKey.Curve())
 	if !ok1 {
 		return errors.New("cannot get curveID")
@@ -35,65 +33,23 @@ func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serve
 	// get curve params
 	curveParams := curve.Params()
 
-	// proxy private key
+	// derive some sample keys for testing purposes
+
+	// sample proxy private key
 	proxyKey, err := generateECDHEKey(config.rand(), curveID)
 	if err != nil {
 		return errors.New("proxy generateECDHEKey error")
 	}
 
-	// for testing purposes only: generate server private key
-	// server private key2
-	serverKey2, err := generateECDHEKey(config.rand(), curveID)
+	// sample server private key
+	serverKey, err := generateECDHEKey(config.rand(), curveID)
 	if err != nil {
-		return errors.New("server generateECDHEKey2 error")
+		return errors.New("server generateECDHEKey error")
 	}
 
-	// compute server public key ^ client key
-	// point of proxy
-	// c2 := clientKey.Curve()
-	p, err := nistec.NewP256Point().SetBytes(serverKey2.PublicKey().Bytes())
-	if err != nil {
-		return errors.New("c2.newPoint() error")
-	}
-	newP, err := p.ScalarMult(p, clientKey.Bytes())
-	if err != nil {
-		return errors.New("ScalarMult error")
-	}
+	// compute client value which is shared with the server
 
-	// p, err := c.newPoint().ScalarBaseMult(key.privateKey)
-	mypublicKey := newP.Bytes()
-
-	// compute server public client key ^ proxy key
-	// point of proxy
-	p2, err := nistec.NewP256Point().SetBytes(serverKey2.PublicKey().Bytes())
-	if err != nil {
-		return errors.New("c2.newPoint() error")
-	}
-	newP2, err := p2.ScalarMult(p2, proxyKey.Bytes())
-	if err != nil {
-		return errors.New("ScalarMult error")
-	}
-
-	mypublicKey2 := newP2.Bytes()
-
-	ttproxyPubKeyX, ttproxyPubKeyY := elliptic.Unmarshal(curve, mypublicKey)
-	ttclientPubKeyX, ttclientPubKeyY := elliptic.Unmarshal(curve, mypublicKey2)
-	ttclientProxyPubkeyX, ttclientProxyPubkeyY := curveParams.Add(ttclientPubKeyX, ttclientPubKeyY, ttproxyPubKeyX, ttproxyPubKeyY)
-	ttclientProxyPubkey := elliptic.Marshal(curve, ttclientProxyPubkeyX, ttclientProxyPubkeyY)
-
-	p3, err := nistec.NewP256Point().SetBytes(ttclientProxyPubkey)
-	if err != nil {
-		return errors.New("c2.newPoint() error")
-	}
-
-	bs, _ := p3.BytesX()
-	fmt.Println("ttclientProxyPubkeyX:", bs)
-	// bs must be equal to z!
-
-	fmt.Println("mypublicKey", mypublicKey)
-	fmt.Println("mypublicKey2", mypublicKey2)
-
-	// merge proxy and client key
+	// merge proxy and client key public keys
 	proxyPubKeyX, proxyPubKeyY := elliptic.Unmarshal(curve, proxyKey.PublicKey().Bytes())
 	clientPubKeyX, clientPubKeyY := elliptic.Unmarshal(curve, clientKey.PublicKey().Bytes())
 	clientProxyPubkeyX, clientProxyPubkeyY := curveParams.Add(clientPubKeyX, clientPubKeyY, proxyPubKeyX, proxyPubKeyY)
@@ -102,61 +58,80 @@ func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serve
 	// paste public key
 	pcPubKey, err := clientKey.Curve().NewPublicKey(clientProxyPubkey)
 	if err != nil {
-		return errors.New("pk parsing failed 1")
+		return errors.New("pk parsing failed")
 	}
 
 	// server side session key derivation
+
 	// thats a scalar multiplication, the server then uses the x coordinate of the received point and continues
 	// ecdh returns x coordinate already.
-	z, err := serverKey2.ECDH(pcPubKey)
+	// z is the x coordinate which is used in the key derivation function
+	z, err := serverKey.ECDH(pcPubKey)
 	if err != nil {
-		return errors.New("ecdh error 1")
+		return errors.New("ecdh error")
 	}
+
+	// now the second part on the client side
+	// now back to client side secret computation, which both client do individually
+	// client compute their secret share on top of the server public key
+
+	// server public key ^ client key
+	// secret point of client
+	p, err := nistec.NewP256Point().SetBytes(serverKey.PublicKey().Bytes())
+	if err != nil {
+		return errors.New("nistec.NewP256Point().SetBytes() error")
+	}
+	newP, err := p.ScalarMult(p, clientKey.Bytes())
+	if err != nil {
+		return errors.New("ScalarMult error")
+	}
+	proxySecretPublicKey := newP.Bytes()
+
+	// server public client key ^ proxy key
+	// secret point of proxy
+	p2, err := nistec.NewP256Point().SetBytes(serverKey.PublicKey().Bytes())
+	if err != nil {
+		return errors.New("nistec.NewP256Point().SetBytes() error")
+	}
+	newP2, err := p2.ScalarMult(p2, proxyKey.Bytes())
+	if err != nil {
+		return errors.New("ScalarMult error")
+	}
+	clientSecretPublicKey := newP2.Bytes()
+
+	// this part is done in 2PC, but tested here to check the math
+
+	// add secret values of client and proxy together which are computed on top of server public key
+	proxySecretPublicKeyX, proxySecretPublicKeyY := elliptic.Unmarshal(curve, proxySecretPublicKey)
+	clientSecretPublicKeyX, clientSecretPublicKeyY := elliptic.Unmarshal(curve, clientSecretPublicKey)
+	addClientSecretsX, addClientSecretsY := curveParams.Add(clientSecretPublicKeyX, clientSecretPublicKeyY, proxySecretPublicKeyX, proxySecretPublicKeyY)
+	addClientSecretsPublicKey := elliptic.Marshal(curve, addClientSecretsX, addClientSecretsY)
+
+	// instead of parsing it into a public key, access X coordinate
+	p3, err := nistec.NewP256Point().SetBytes(addClientSecretsPublicKey)
+	if err != nil {
+		return errors.New("nistec.NewP256Point().SetBytes() error")
+	}
+	xCoord, _ := p3.BytesX()
+	// xCoord must be equal to z!
+
+	// the twist here is that 1. adding the client & proxy public keys and 2. scalar multiply the server key on top is equal to
+	// having the proxy and client add their secrets on top of the server public key and then add these values together
+	// the x coordinate is the same, as in the end the points are the same
+	// for the math, of the 3PHS check the files in the folder 3PHS
 
 	// comparison
-	if !bytes.Equal(bs, z) {
-		fmt.Println("EEEEERRRORR:...")
-	}
-
-	// ecdh on y server with secrets from client
-	z_p, err := clientKey.ECDH(serverKey2.PublicKey())
-	if err != nil {
-		return errors.New("ecdh error 1")
-	}
-
-	// ecdh on y server with secrets from client
-	z_v, err := proxyKey.ECDH(serverKey2.PublicKey())
-	if err != nil {
-		return errors.New("ecdh error 1")
+	if !bytes.Equal(xCoord, z) {
+		fmt.Println("3PHS ec computation add up failed")
 	}
 
 	// xor
-	z_new := make([]byte, len(z))
-	for i := 0; i < len(z); i++ {
-		z_new[i] = z_p[i] ^ z_v[i]
-	}
+	// z_new := make([]byte, len(z))
+	// for i := 0; i < len(z); i++ {
+	// 	z_new[i] = z_p[i] ^ z_v[i]
+	// }
 
-	suite := suites.MustFind("p256")
-	// G := suite.Point().Base()
-	z1Scalar := suite.Scalar().SetBytes(z_p)
-	z2Scalar := suite.Scalar().SetBytes(z_v)
-
-	z_out := suite.Scalar().Mul(z1Scalar, z2Scalar).String()
-	ll, _ := hex.DecodeString(z_out)
-
-	fmt.Println("z", z)
-	fmt.Println("z_new", z_new)
-	fmt.Println("z_out", ll)
-	fmt.Println("z_p", z_p)
-	fmt.Println("z_v", z_v)
+	// continue to compute ec2f on the client side in 2PC
 
 	return nil
-}
-
-func clientComputation() {
-
-}
-
-func proxyCompuation() {
-
 }
