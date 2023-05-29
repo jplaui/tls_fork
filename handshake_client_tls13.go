@@ -11,7 +11,6 @@ import (
 	"crypto"
 	"crypto/hmac"
 	"crypto/rsa"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash"
@@ -168,7 +167,7 @@ func (hs *clientHandshakeStateTLS13) checkServerHelloOrHRR() error {
 	hs.suite = selectedSuite
 	c.cipherSuite = hs.suite.id
 
-	fmt.Println("suite selected:", hs.suite.id)
+	// fmt.Println("suite selected:", hs.suite.id)
 
 	return nil
 }
@@ -365,6 +364,13 @@ func (hs *clientHandshakeStateTLS13) processServerHello() error {
 
 func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 	c := hs.c
+
+	// call ectf function
+	err := computeECTF(c.config, hs.hello, hs.serverHello, hs.ecdheKey)
+	if err != nil {
+		fmt.Println("error in computeECTF", err)
+	}
+	fmt.Println("keyshares", hs.hello.keyShares[:])
 
 	// jan: diffie hellman key
 	peerKey, err := hs.ecdheKey.Curve().NewPublicKey(hs.serverHello.serverShare.data)
@@ -578,8 +584,8 @@ func (hs *clientHandshakeStateTLS13) readServerFinished() error {
 	// fmt.Println("SF raw:", hex.EncodeToString(finished.raw[:]))
 	// fmt.Println("SF verifydata:", hex.EncodeToString(finished.verifyData[:]))
 
-	fmt.Println("verify SF, trafficSecret:", hex.EncodeToString(c.in.trafficSecret))
-	fmt.Println("verify SF, transcript Hash:", hex.EncodeToString(hs.transcript.Sum(nil)))
+	// fmt.Println("verify SF, trafficSecret:", hex.EncodeToString(c.in.trafficSecret))
+	// fmt.Println("verify SF, transcript Hash:", hex.EncodeToString(hs.transcript.Sum(nil)))
 
 	expectedMAC := hs.suite.finishedHash(c.in.trafficSecret, hs.transcript)
 	if !hmac.Equal(expectedMAC, finished.verifyData) {
@@ -587,8 +593,8 @@ func (hs *clientHandshakeStateTLS13) readServerFinished() error {
 		return errors.New("tls: invalid server finished hash")
 	}
 
-	fmt.Println("expectedMAC:", expectedMAC)
-	fmt.Println("finished.verifyData:", finished.verifyData)
+	// fmt.Println("expectedMAC:", expectedMAC)
+	// fmt.Println("finished.verifyData:", finished.verifyData)
 
 	if err := transcriptMsg(finished, hs.transcript); err != nil {
 		return err
@@ -709,7 +715,7 @@ func (hs *clientHandshakeStateTLS13) sendClientFinished() error {
 	if !c.config.SessionTicketsDisabled && c.config.ClientSessionCache != nil {
 		c.resumptionSecret = hs.suite.deriveSecret(hs.masterSecret,
 			resumptionLabel, hs.transcript)
-		fmt.Println("RMS:", hex.EncodeToString(c.resumptionSecret))
+		// fmt.Println("RMS:", hex.EncodeToString(c.resumptionSecret))
 	}
 
 	return nil

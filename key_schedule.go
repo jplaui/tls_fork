@@ -6,6 +6,7 @@ package tls
 
 import (
 	"client/tls_fork/ecdh"
+	"crypto/elliptic"
 	"crypto/hmac"
 	"errors"
 	"fmt"
@@ -140,6 +141,19 @@ func curveForCurveID(id CurveID) (ecdh.Curve, bool) {
 		return ecdh.P384(), true
 	case CurveP521:
 		return ecdh.P521(), true
+	default:
+		return nil, false
+	}
+}
+
+func ellipticCurveForCurveID(id CurveID) (elliptic.Curve, bool) {
+	switch id {
+	case CurveP256:
+		return elliptic.P256(), true
+	case CurveP384:
+		return elliptic.P384(), true
+	case CurveP521:
+		return elliptic.P521(), true
 	default:
 		return nil, false
 	}
