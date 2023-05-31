@@ -388,16 +388,13 @@ func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serve
 	fmt.Println("s share proxy:", sProxy)
 
 	additiveS := new(big.Int).Add(clientEc2fParty.Params.SShare, proxyEc2fParty.Params.SShare)
-	fmt.Println("S without mod:", additiveS.Bytes())
-	additiveS2 := new(big.Int).Mod(additiveS, curveParams.P)
+	s := new(big.Int).Mod(additiveS, curveParams.P)
 
-	fmt.Println("s", additiveS2.Bytes())
+	fmt.Println("s", s.Bytes())
 
-	// z_new := make([]byte, len(sClient))
-	// for i := 0; i < len(z); i++ {
-	// 	z_new[i] = sClient[i] ^ sProxy[i]
-	// }
-	// fmt.Println("s added:", z_new)
+	if !bytes.Equal(s.Bytes(), z) {
+		return errors.New("s calculation failed")
+	}
 
 	return nil
 }
@@ -518,10 +515,10 @@ func (p2 *ec2fParty2) MtaEvaluate(cipherData [][]byte, plains ...*big.Int) ([]by
 	}
 
 	// update ciphertext
-	cipherVector = new(big.Int).Mul(new(big.Int).Mul(cipherVector, encryptMtaRandom.C), nSquare)
+	cipherVector = new(big.Int).Mod(new(big.Int).Mul(cipherVector, encryptMtaRandom.C), nSquare)
 
 	// -m calculation
-	p2.Params.MtaShare = new(big.Int).Mul(new(big.Int).Neg(mtaRandom), nSquare)
+	p2.Params.MtaShare = new(big.Int).Mod(new(big.Int).Neg(mtaRandom), p2.Params.EcModPrime)
 
 	return cipherVector.Bytes(), nil
 }
