@@ -130,6 +130,50 @@ func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serve
 		fmt.Println("3PHS ec computation add up failed")
 	}
 
+	fmt.Println("z:", z)
+	fmt.Println("xCoord:", xCoord)
+
+	// compute new x cord
+	// testPubKey, err := clientKey.Curve().NewPublicKey(addClientSecretsPublicKey)
+	// if err != nil {
+	// 	return errors.New("pk parsing failed")
+	// }
+	xtest, ytest := elliptic.Unmarshal(curve, serverKey.PublicKey().Bytes())
+
+	// x, y := elliptic.Unmarshal(curve, peerPublicKey)
+	// if x == nil {
+	// 	return nil
+	// }
+
+	xShared, yShared := curve.ScalarMult(xtest, ytest, clientKey.Bytes())
+	sharedKeyX := make([]byte, (curve.Params().BitSize+7)/8)
+	sharedKeyY := make([]byte, (curve.Params().BitSize+7)/8)
+	xShared.FillBytes(sharedKeyX)
+	yShared.FillBytes(sharedKeyY)
+
+	// xBs, _ := hex.DecodeString(xtest.String())
+	fmt.Println("x1:", xShared)
+	fmt.Println("y1:", yShared)
+
+	x1 := new(big.Int).SetBytes(sharedKeyX)
+	y1 := new(big.Int).SetBytes(sharedKeyY)
+
+	xShared2, yShared2 := curve.ScalarMult(xtest, ytest, proxyKey.Bytes())
+	sharedKeyX2 := make([]byte, (curve.Params().BitSize+7)/8)
+	sharedKeyY2 := make([]byte, (curve.Params().BitSize+7)/8)
+	xShared2.FillBytes(sharedKeyX2)
+	yShared2.FillBytes(sharedKeyY2)
+
+	x2 := new(big.Int).SetBytes(sharedKeyX2)
+	y2 := new(big.Int).SetBytes(sharedKeyY2)
+
+	fmt.Println("x2:", xShared)
+	fmt.Println("y2:", yShared)
+
+	// added := new(big.Int).Mod(new(big.Int).Add(x1, x2), curveParams.P)
+	// bs, _ := hex.DecodeString(added.String())
+	// fmt.Println("bs:", bs)
+
 	// xor
 	// z_new := make([]byte, len(z))
 	// for i := 0; i < len(z); i++ {
@@ -142,15 +186,16 @@ func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serve
 	// client has P1 = (x1, y1) and proxy has P2 = (x2, y2)
 	// P1 + P2 = (x,y)
 	// x = s1 + s2
-	x, y := elliptic.Unmarshal(curve, addClientSecretsPublicKey)
-	fmt.Println("xCoord and x shoule be equal:", xCoord, x)
-	fmt.Println("dont need y", y)
+	// x, y := elliptic.Unmarshal(curve, addClientSecretsPublicKey)
+	// xBs, _ := hex.DecodeString(x.String())
+	// fmt.Println("xCoord and x should not be equal:", xCoord, xBs)
+	// fmt.Println("dont need y", y)
 	// use x to verify ectf computation of s1 and s2 values
 
-	x1 := clientSecretPublicKeyX
-	y1 := clientSecretPublicKeyY
-	x2 := proxySecretPublicKeyX
-	y2 := proxySecretPublicKeyY
+	// x1 = clientSecretPublicKeyX
+	// y1 = clientSecretPublicKeyY
+	// x2 = proxySecretPublicKeyX
+	// y2 = proxySecretPublicKeyY
 
 	// @client, set client to party 1
 	clientEc2fParty, err := createEc2fParty1(x1, y1, curveParams.P, rand.Reader)
@@ -170,7 +215,7 @@ func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serve
 		clientEc2fParty.Params.RhoShare,
 	)
 	if err != nil {
-		return errors.New("MtaEncrypt(NegX1, RhoShare) error")
+		return errors.New("MtaEncrypt(XShare, RhoShare) error")
 	}
 
 	// @client, create msg1
@@ -331,12 +376,28 @@ func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serve
 	}
 
 	// @client, derive s share
-	err = clientEc2fParty.ComputeSShare()
+	err = clientEc2fParty.ComputeSShare(x1)
 	if err != nil {
 		return errors.New("client ComputeSShare() error")
 	}
 
 	// check if s shares work
+	sClient := clientEc2fParty.Params.SShare.Bytes()
+	sProxy := proxyEc2fParty.Params.SShare.Bytes()
+	fmt.Println("s share client:", sClient)
+	fmt.Println("s share proxy:", sProxy)
+
+	additiveS := new(big.Int).Add(clientEc2fParty.Params.SShare, proxyEc2fParty.Params.SShare)
+	fmt.Println("S without mod:", additiveS.Bytes())
+	additiveS2 := new(big.Int).Mod(additiveS, curveParams.P)
+
+	fmt.Println("s", additiveS2.Bytes())
+
+	// z_new := make([]byte, len(sClient))
+	// for i := 0; i < len(z); i++ {
+	// 	z_new[i] = sClient[i] ^ sProxy[i]
+	// }
+	// fmt.Println("s added:", z_new)
 
 	return nil
 }
@@ -380,10 +441,7 @@ type ec2fParams struct {
 	MtaShare    *big.Int
 	LinearShare *big.Int // in case of delta, this parameter is public
 	EtaShare    *big.Int
-
-	ScalarElement *big.Int
-	ScalarRandom  *big.Int
-	SShare        *big.Int
+	SShare      *big.Int
 
 	// extra
 	Random     io.Reader
@@ -395,7 +453,7 @@ type ec2fParty2 struct {
 	HePublicKey *paillier.PublicKey
 }
 
-func createEc2fParty2(x2, y2, modP *big.Int, r io.Reader) (ec2fParty2, error) {
+func createEc2fParty2(x2, y2, modP *big.Int, r io.Reader) (*ec2fParty2, error) {
 
 	// init ec2f parameters
 	ec2fParams := &ec2fParams{
@@ -406,7 +464,7 @@ func createEc2fParty2(x2, y2, modP *big.Int, r io.Reader) (ec2fParty2, error) {
 	}
 
 	// init party2
-	var p2 ec2fParty2
+	p2 := new(ec2fParty2)
 
 	// compute rhoShare at party 2
 	rhoShare, err := genRandom(ec2fParams.Random, modP)
@@ -469,18 +527,17 @@ func (p2 *ec2fParty2) MtaEvaluate(cipherData [][]byte, plains ...*big.Int) ([]by
 }
 
 func (p2 *ec2fParty2) ComputeLinearShare(mtaType int) error {
-	linearShare := new(big.Int)
+	// linearShare := new(big.Int)
 	switch mtaType {
 	case 0:
-		linearShare = new(big.Int).Mul(p2.Params.XShare, p2.Params.RhoShare)
+		p2.Params.LinearShare = new(big.Int).Mul(p2.Params.XShare, p2.Params.RhoShare)
 	case 1:
-		linearShare = new(big.Int).Mul(p2.Params.YShare, p2.Params.EtaShare)
-	default:
-		return errors.New("cannot not compute linear share")
+		p2.Params.LinearShare = new(big.Int).Mul(p2.Params.YShare, p2.Params.EtaShare)
 	}
-	linearShare = new(big.Int).Add(linearShare, p2.Params.MtaShare)
-	linearShare = new(big.Int).Mod(linearShare, p2.Params.EcModPrime)
-	p2.Params.LinearShare = linearShare
+
+	p2.Params.LinearShare = new(big.Int).Add(p2.Params.LinearShare, p2.Params.MtaShare)
+	p2.Params.LinearShare = new(big.Int).Mod(p2.Params.LinearShare, p2.Params.EcModPrime)
+	// p2.Params.LinearShare = linearShare
 	return nil
 }
 
@@ -501,6 +558,18 @@ func (p2 *ec2fParty2) ComputeEtaShare(externalLinearShare []byte) error {
 func (p2 *ec2fParty2) ComputeSShare() error {
 
 	// mtaShare is gamma2
+	gamma := p2.Params.MtaShare
+	lambda := p2.Params.LinearShare
+	x := p2.Params.XShare
+	p := p2.Params.EcModPrime
+
+	// compute s share
+	two := big.NewInt(2)
+	double := new(big.Int).Mul(two, gamma)
+	square := new(big.Int).Exp(lambda, two, p)
+	p2.Params.SShare = new(big.Int).Add(double, square)
+	p2.Params.SShare = new(big.Int).Sub(p2.Params.SShare, x)
+	p2.Params.SShare = new(big.Int).Mod(p2.Params.SShare, p)
 
 	// compute linear relation of s share
 
@@ -512,19 +581,26 @@ type ec2fParty1 struct {
 	HePrivateKey *paillier.PrivateKey
 }
 
-func createEc2fParty1(x1, y1, modP *big.Int, r io.Reader) (ec2fParty1, error) {
+func createEc2fParty1(x1, y1, modP *big.Int, r io.Reader) (*ec2fParty1, error) {
 
 	// init party1
-	var p1 ec2fParty1
+	p1 := new(ec2fParty1)
 
 	// init ec2f parameters
-	// ec2fParams := new(ec2fParams)
-	ec2fParams := &ec2fParams{
-		Random:     r,
-		EcModPrime: modP,
-		XShare:     new(big.Int).Mod(new(big.Int).Neg(x1), modP),
-		YShare:     new(big.Int).Mod(new(big.Int).Neg(y1), modP),
-	}
+	ec2fParams := new(ec2fParams)
+	ec2fParams.Random = r
+	ec2fParams.EcModPrime = modP
+	ec2fParams.XShare = new(big.Int).Mod(new(big.Int).Neg(x1), modP)
+	ec2fParams.YShare = new(big.Int).Mod(new(big.Int).Neg(y1), modP)
+	// ec2fParams := &ec2fParams{
+	// 	Random:     r,
+	// 	EcModPrime: modP,
+	// 	XShare:     new(big.Int).Mod(new(big.Int).Neg(x1), modP),
+	// 	YShare:     new(big.Int).Mod(new(big.Int).Neg(y1), modP),
+	// }
+
+	// set ec2f params
+	p1.Params = ec2fParams
 
 	// rhoShare generation
 	rhoShare, err := genRandom(p1.Params.Random, p1.Params.EcModPrime)
@@ -533,17 +609,14 @@ func createEc2fParty1(x1, y1, modP *big.Int, r io.Reader) (ec2fParty1, error) {
 	}
 	ec2fParams.RhoShare = rhoShare
 
-	// set ec2f params
-	p1.Params = ec2fParams
-
 	// init paillier
-	paillier, err := genHePrivateKey(p1.Params.Random)
+	privateKey, err := genHePrivateKey(p1.Params.Random)
 	if err != nil {
 		return p1, errors.New("genHePrivateKey error")
 	}
 
 	// set homomorphic encryption (he) params
-	p1.HePrivateKey = paillier.PrivateKey
+	p1.HePrivateKey = privateKey
 
 	return p1, nil
 }
@@ -577,16 +650,15 @@ func (p1 *ec2fParty1) ComputeMtaShare(cipherdata []byte) error {
 func (p1 *ec2fParty1) ComputeLinearShare(mtaType int) error {
 
 	// compute linearShare
-	linearShare := new(big.Int)
+	// linearShare := new(big.Int)
 	switch mtaType {
 	case 0:
-		linearShare = new(big.Int).Mul(p1.Params.XShare, p1.Params.RhoShare)
+		p1.Params.LinearShare = new(big.Int).Mul(p1.Params.XShare, p1.Params.RhoShare)
 	case 1:
-		linearShare = new(big.Int).Mul(p1.Params.YShare, p1.Params.EtaShare)
-	default:
-		return errors.New("could not compute linearShare")
+		p1.Params.LinearShare = new(big.Int).Mul(p1.Params.YShare, p1.Params.EtaShare)
 	}
-	p1.Params.LinearShare = new(big.Int).Add(linearShare, p1.Params.MtaShare)
+
+	p1.Params.LinearShare = new(big.Int).Add(p1.Params.LinearShare, p1.Params.MtaShare)
 	p1.Params.LinearShare = new(big.Int).Mod(p1.Params.LinearShare, p1.Params.EcModPrime)
 
 	return nil
@@ -606,11 +678,21 @@ func (p1 *ec2fParty1) ComputeEtaShare(externalLinearShare []byte) error {
 	return nil
 }
 
-func (p1 *ec2fParty1) ComputeSShare() error {
+func (p1 *ec2fParty1) ComputeSShare(x *big.Int) error {
 
 	// mtaShare is gamma1
+	gamma := p1.Params.MtaShare
+	lambda := p1.Params.LinearShare
+	// x := p1.Params.XShare
+	p := p1.Params.EcModPrime
 
-	// compute linear relation of s share
+	// compute s share
+	two := big.NewInt(2)
+	double := new(big.Int).Mul(two, gamma)
+	square := new(big.Int).Exp(lambda, two, p)
+	p1.Params.SShare = new(big.Int).Add(double, square)
+	p1.Params.SShare = new(big.Int).Sub(p1.Params.SShare, x)
+	p1.Params.SShare = new(big.Int).Mod(p1.Params.SShare, p)
 
 	return nil
 }
