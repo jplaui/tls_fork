@@ -152,117 +152,191 @@ func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serve
 	x2 := proxySecretPublicKeyX
 	y2 := proxySecretPublicKeyY
 
-	// p for modulo computations
-	modP := curveParams.P
-
-	// pailier parameters
-	paillierParams, err := initPaillier(config.rand())
+	// @client, set client to party 1
+	clientEc2fParty, err := createEc2fParty1(x1, y1, curveParams.P, rand.Reader)
 	if err != nil {
-		return errors.New("initPaillier error")
+		return errors.New("createEc2fParty1 error")
 	}
 
-	// compute rho1 at client
-	// curveParams.P, config.rand() // curveParams.P is *big.Int
-	rho1, err := genRandom(config.rand(), modP)
+	// @proxy, set proxy to party 2
+	proxyEc2fParty, err := createEc2fParty2(x2, y2, curveParams.P, rand.Reader)
 	if err != nil {
-		return errors.New("rho1 genRandom error")
+		return errors.New("createEc2fParty2 error")
 	}
 
-	// turn ec params into big integer numbers
-	minusX1 := new(big.Int).Mod(new(big.Int).Neg(x1), modP)
-	encryptMinusX1, err := paillierParams.PrivateKey.Encrypt(minusX1, config.rand())
+	// @client, compute mta message 1
+	cipher1, err := clientEc2fParty.MtaEncrypt(
+		clientEc2fParty.Params.XShare,
+		clientEc2fParty.Params.RhoShare,
+	)
 	if err != nil {
-		return errors.New("paillier encryption minusX1 error")
+		return errors.New("MtaEncrypt(NegX1, RhoShare) error")
 	}
-	encryptRho1, err := paillierParams.PrivateKey.Encrypt(rho1, config.rand())
+
+	// @client, create msg1
+	msg1 := ec2fMtaMsg1{
+		HePublicKey: clientEc2fParty.GetHePubKeyBytes(),
+		Cipherdata:  cipher1,
+	}
+
+	// msg1 send to proxy
+
+	// @proxy, process msg 1 and compute mta msg 2
+	err = proxyEc2fParty.SetHePublicKey(msg1.HePublicKey)
 	if err != nil {
-		return errors.New("paillier encryption rho1 error")
+		return errors.New("SetHePublicKey(HePublicKey)")
 	}
-	// access bytes of encrypted paillier value with encryptRho1.C.Bytes()
 
-	// sending paillier public key, bytes of encryptRho1, bytes of minusX1
-
-	// proxy paillier public key parsing
-	proxyPaillierPubKey := new(paillier.PublicKey)
-	proxyPaillierPubKey.N = new(big.Int).SetBytes(paillierParams.PublicKey.N.Bytes())
-	nSquare := proxyPaillierPubKey.GetNSquare()
-
-	// compute rho2 at proxy
-	rho2, err := genRandom(rand.Reader, modP)
+	// @proxy, evaluate mta data
+	cipher2, err := proxyEc2fParty.MtaEvaluate(
+		msg1.Cipherdata,
+		proxyEc2fParty.Params.RhoShare,
+		proxyEc2fParty.Params.XShare,
+	)
 	if err != nil {
-		return errors.New("rho2 genRandom error")
+		return errors.New("MtaEvaluate(HePublicKey, Cipherdata, RhoShare, XShare) error")
 	}
-	// proxy rand m generation, we are calling it secretMtaBeta now
-	secretMtaBeta, err := genRandom(rand.Reader, modP)
+
+	// @proxy, compute delta share
+	err = proxyEc2fParty.ComputeLinearShare(0)
 	if err != nil {
-		return errors.New("secretMtaBeta genRandom error")
+		return errors.New("ComputeLinearShare(0) error")
 	}
 
-	// parse mta values of client
-	parsedEncryptMinusX1 := new(big.Int).SetBytes(encryptMinusX1.C.Bytes())
-	parsedEncryptRho1 := new(big.Int).SetBytes(encryptRho1.C.Bytes())
+	// @proxy, create msg2
+	msg2 := ec2fMtaMsg2{
+		Cipherdata: cipher2,
+		DeltaShare: proxyEc2fParty.Params.LinearShare.Bytes(),
+	}
 
-	// vector mta combine encrypted rhos and xX values
-	encryptMinusX1Rho2 := new(big.Int).Exp(parsedEncryptMinusX1, rho2, nSquare)
-	encryptRho1X2 := new(big.Int).Exp(parsedEncryptRho1, x2, nSquare)
-	encryptVec := new(big.Int).Mul(encryptMinusX1Rho2, encryptRho1X2)
+	// msg2 send to client
 
-	// add encrypted randomness of secretMtaBeta
-	// first encrypt secretMtaBeta
-	encryptSecretMtaBeta, err := proxyPaillierPubKey.Encrypt(secretMtaBeta, rand.Reader)
+	// @client, compute mta share and set in params
+	err = clientEc2fParty.ComputeMtaShare(msg2.Cipherdata)
 	if err != nil {
-		return errors.New("encryptSecretMtaBeta proxyPaillierPubKey.Encrypt error")
-	}
-	// now add to encrypted paillier vector of values
-	encryptVec = new(big.Int).Mul(encryptVec, encryptSecretMtaBeta.C)
-	// vector modulo operation
-	encryptVec = new(big.Int).Mul(encryptVec, nSquare)
-	// c2Bytes := encryptVec.Bytes()
-
-	// compute proxy alpha2
-	proxyAlpha2 := new(big.Int).Neg(secretMtaBeta)
-	proxyAlpha2 = new(big.Int).Mod(proxyAlpha2, modP)
-
-	// computing delta2
-	delta2 := new(big.Int).Mul(x2, rho2)
-	delta2 = new(big.Int).Add(delta2, proxyAlpha2)
-	delta2 = new(big.Int).Mod(delta2, modP)
-
-	// share delta2 with client with delta2.Bytes()
-
-	// at client
-
-	// decrypt encrypted vector of proxy and access clientAlpha1 value
-	// parse paillier cipher text
-	paillierCypher := new(paillier.Cypher)
-	paillierCypher.C = new(big.Int).SetBytes(encryptVec.Bytes())
-	clientAlpha1 := paillierParams.PrivateKey.Decrypt(paillierCypher)
-	clientAlpha1 = new(big.Int).Mod(clientAlpha1, modP)
-
-	// compute delta1 at client
-	delta1 := new(big.Int).Mul(minusX1, rho1)
-	delta1 = new(big.Int).Add(delta1, clientAlpha1)
-	delta1 = new(big.Int).Mod(delta1, modP)
-
-	// compute delta at client
-	delta2client := new(big.Int).SetBytes(delta2.Bytes())
-	clientDelta := new(big.Int).Add(delta1, delta2client)
-	clientDelta = new(big.Int).Mod(clientDelta, modP)
-
-	// compute delta at proxy
-	delta1proxy := new(big.Int).SetBytes(delta1.Bytes())
-	proxyDelta := new(big.Int).Add(delta2, delta1proxy)
-	proxyDelta = new(big.Int).Mod(proxyDelta, modP)
-
-	if !bytes.Equal(clientDelta.Bytes(), proxyDelta.Bytes()) {
-		return errors.New("delta computation failed")
+		return errors.New("client ComputeMtaShare(msg2.Cipherdata) error")
 	}
 
-	// compute eta at client and compute new mta c1 values
-	deltaInv := new(big.Int).ModInverse(clientDelta, modP)
-	eta1 := new(big.Int).Mod(new(big.Int).Mul(rho1, deltaInv), modP)
+	// @client, compute linear share and decide on case
+	err = clientEc2fParty.ComputeLinearShare(0)
+	if err != nil {
+		return errors.New("client ComputeLinearShare(0) error")
+	}
 
-	// continue to compute ec2f on the client side in 2PC
+	// @client, process msg 2 and exchange deltaShare with next mta msg1
+	err = clientEc2fParty.ComputeEtaShare(msg2.DeltaShare)
+	if err != nil {
+		return errors.New("client ComputeEtaShare() error")
+	}
+
+	// @client, compute msg3
+	cipher1, err = clientEc2fParty.MtaEncrypt(
+		clientEc2fParty.Params.YShare,
+		clientEc2fParty.Params.EtaShare,
+	)
+	if err != nil {
+		return errors.New("MtaEncrypt(YShare, EtaShare) error")
+	}
+	msg3 := ec2fMtaMsg3{
+		Cipherdata: cipher1,
+		DeltaShare: clientEc2fParty.Params.LinearShare.Bytes(),
+	}
+
+	// msg3 send to proxy
+
+	// @proxy, derive etaShare
+	err = proxyEc2fParty.ComputeEtaShare(msg3.DeltaShare)
+	if err != nil {
+		return errors.New("proxy ComputeEtaShare() error")
+	}
+
+	// @proxy, derive etaShare and evaluate mta2
+	cipher2, err = proxyEc2fParty.MtaEvaluate(
+		msg3.Cipherdata,
+		proxyEc2fParty.Params.EtaShare,
+		proxyEc2fParty.Params.YShare,
+	)
+	if err != nil {
+		return errors.New("MtaEvaluate(HePublicKey, Cipherdata, EtaShare, YShare) error")
+	}
+
+	// @proxy, compute lambda share
+	err = proxyEc2fParty.ComputeLinearShare(1)
+	if err != nil {
+		return errors.New("ComputeLinearShare(1) error")
+	}
+
+	// @proxy, create msg4
+	msg4 := ec2fMtaMsg4{
+		Cipherdata:  cipher2,
+		LambdaShare: proxyEc2fParty.Params.LinearShare.Bytes(),
+	}
+
+	// msg4 send to client
+
+	// @client, compute mta share and set in params
+	err = clientEc2fParty.ComputeMtaShare(msg4.Cipherdata)
+	if err != nil {
+		return errors.New("client ComputeMtaShare(msg4.Cipherdata) error")
+	}
+
+	// @client, compute linear share and decide on case
+	err = clientEc2fParty.ComputeLinearShare(1)
+	if err != nil {
+		return errors.New("client ComputeLinearShare(1) error")
+	}
+	// now, lambda correctly set at both parties at linearShare param
+
+	// @client, compute scalar mta encryption
+	cipher1, err = clientEc2fParty.MtaEncrypt(
+		clientEc2fParty.Params.LinearShare,
+	)
+	if err != nil {
+		return errors.New("MtaEncrypt(LinearShare) error")
+	}
+
+	// @client, build last message
+	msg5 := ec2fMtaMsg5{
+		Cipherdata: cipher1,
+	}
+
+	// msg5 send to proxy
+
+	// @proxy, evaluate last scalar mta message
+	cipher2, err = proxyEc2fParty.MtaEvaluate(
+		msg5.Cipherdata,
+		proxyEc2fParty.Params.LinearShare,
+	)
+	if err != nil {
+		return errors.New("MtaEvaluate(HePublicKey, Cipherdata, EtaShare, YShare) error")
+	}
+
+	// @proxy, compute SShare
+	err = proxyEc2fParty.ComputeSShare()
+	if err != nil {
+		return errors.New("proxy ComputeSShare() error")
+	}
+
+	// @proxy, return msg6
+	msg6 := ec2fMtaMsg6{
+		Cipherdata: cipher2,
+	}
+
+	// msg5 send to client
+
+	// @client, decrypt scalar mta msg
+	err = clientEc2fParty.ComputeMtaShare(msg6.Cipherdata)
+	if err != nil {
+		return errors.New("client ComputeMtaShare(msg6.Cipherdata) error")
+	}
+
+	// @client, derive s share
+	err = clientEc2fParty.ComputeSShare()
+	if err != nil {
+		return errors.New("client ComputeSShare() error")
+	}
+
+	// check if s shares work
 
 	return nil
 }
@@ -281,66 +355,298 @@ func genRandom(random io.Reader, p *big.Int) (*big.Int, error) {
 	return r, nil
 }
 
-type PaillierParams struct {
-	P          *big.Int
-	Q          *big.Int
-	PrivateKey *paillier.PrivateKey
-	PublicKey  *paillier.PublicKey
-}
+func genHePrivateKey(random io.Reader) (*paillier.PrivateKey, error) {
 
-func initPaillier(random io.Reader) (PaillierParams, error) {
+	// generate secret primes
 	p, err := rand.Prime(random, 1024)
 	if err != nil {
-		return PaillierParams{}, errors.New("paillier cryptosystem generates prime number p failed")
+		return nil, errors.New("paillier cryptosystem generates prime number p failed")
 	}
-
 	q, err := rand.Prime(random, 1024)
 	if err != nil {
-		return PaillierParams{}, errors.New("paillier cryptosystem generates prime number q failed")
+		return nil, errors.New("paillier cryptosystem generates prime number q failed")
 	}
 
-	privKey := paillier.CreatePrivateKey(p, q)
-	pubKey := privKey.PublicKey
-
-	return PaillierParams{
-		P:          p,
-		Q:          q,
-		PrivateKey: privKey,
-		PublicKey:  pubKey,
-	}, nil
+	// get private key
+	return paillier.CreatePrivateKey(p, q), nil
 }
 
-type EC2FParams struct {
-	rho                   *big.Int
-	eta                   *big.Int
-	publicElementInVector *big.Int
-	scalarElement         *big.Int
-	scalarRandom          *big.Int
-	s                     *big.Int
+// ectf params which are required by all ectf parties
+
+type ec2fParams struct {
+	XShare      *big.Int
+	YShare      *big.Int
+	RhoShare    *big.Int
+	MtaShare    *big.Int
+	LinearShare *big.Int // in case of delta, this parameter is public
+	EtaShare    *big.Int
+
+	ScalarElement *big.Int
+	ScalarRandom  *big.Int
+	SShare        *big.Int
+
+	// extra
+	Random     io.Reader
+	EcModPrime *big.Int
 }
 
-type ClientEC2F struct {
-	params        *EC2FParams
-	mtaPrivateKey *paillier.PrivateKey
+type ec2fParty2 struct {
+	Params      *ec2fParams
+	HePublicKey *paillier.PublicKey
 }
 
-type ProxyEC2F struct {
-	params          *EC2FParams
-	mtaPublicKey    *paillier.PublicKey
-	mtaRandomSecret *big.Int
-	mtaEncryptData  *big.Int
+func createEc2fParty2(x2, y2, modP *big.Int, r io.Reader) (ec2fParty2, error) {
+
+	// init ec2f parameters
+	ec2fParams := &ec2fParams{
+		XShare:     x2,
+		YShare:     y2,
+		EcModPrime: modP,
+		Random:     r,
+	}
+
+	// init party2
+	var p2 ec2fParty2
+
+	// compute rhoShare at party 2
+	rhoShare, err := genRandom(ec2fParams.Random, modP)
+	if err != nil {
+		return p2, errors.New("rhoShare genRandom error")
+	}
+	ec2fParams.RhoShare = rhoShare
+
+	p2.Params = ec2fParams
+
+	return p2, nil
 }
 
-func mtaC1() []byte {
+func (p2 *ec2fParty2) SetHePublicKey(pubKey []byte) error {
+	p2.HePublicKey = new(paillier.PublicKey)
+	p2.HePublicKey.N = new(big.Int).SetBytes(pubKey)
 	return nil
 }
 
-func mtaC2() []byte {
+func (p2 *ec2fParty2) MtaEvaluate(cipherData [][]byte, plains ...*big.Int) ([]byte, error) {
+
+	// get public key params
+	nSquare := p2.HePublicKey.GetNSquare()
+
+	// compute vector mta
+	cipherVector := new(big.Int)
+	for i := 0; i < len(cipherData); i++ {
+
+		// parse msg 1 ciphers
+		c := new(big.Int).SetBytes(cipherData[i])
+		c = new(big.Int).Exp(c, plains[i], nSquare)
+
+		if i > 0 {
+			cipherVector = new(big.Int).Mul(cipherVector, c)
+		} else {
+			cipherVector = c
+		}
+	}
+
+	// generate random m, -m
+	// proxy randness generation for mta sharing (secretMtaBeta)
+	mtaRandom, err := genRandom(p2.Params.Random, p2.Params.EcModPrime)
+	if err != nil {
+		return nil, errors.New("mtaRandom genRandom error")
+	}
+
+	// encrypt randomness
+	encryptMtaRandom, err := p2.HePublicKey.Encrypt(mtaRandom, p2.Params.Random)
+	if err != nil {
+		return nil, errors.New("mtaRandom paillier encrypt error")
+	}
+
+	// update ciphertext
+	cipherVector = new(big.Int).Mul(new(big.Int).Mul(cipherVector, encryptMtaRandom.C), nSquare)
+
+	// -m calculation
+	p2.Params.MtaShare = new(big.Int).Mul(new(big.Int).Neg(mtaRandom), nSquare)
+
+	return cipherVector.Bytes(), nil
+}
+
+func (p2 *ec2fParty2) ComputeLinearShare(mtaType int) error {
+	linearShare := new(big.Int)
+	switch mtaType {
+	case 0:
+		linearShare = new(big.Int).Mul(p2.Params.XShare, p2.Params.RhoShare)
+	case 1:
+		linearShare = new(big.Int).Mul(p2.Params.YShare, p2.Params.EtaShare)
+	default:
+		return errors.New("cannot not compute linear share")
+	}
+	linearShare = new(big.Int).Add(linearShare, p2.Params.MtaShare)
+	linearShare = new(big.Int).Mod(linearShare, p2.Params.EcModPrime)
+	p2.Params.LinearShare = linearShare
 	return nil
 }
 
-func mtaFinish() {
+func (p2 *ec2fParty2) ComputeEtaShare(externalLinearShare []byte) error {
 
+	// compute sum of linear shares
+	parsedLinearShare := new(big.Int).SetBytes(externalLinearShare)
+	sumLinearShare := new(big.Int).Add(p2.Params.LinearShare, parsedLinearShare)
+	sumLinearShare = new(big.Int).Mod(sumLinearShare, p2.Params.EcModPrime)
+
+	// compute eta at client and compute new mta c1 values
+	sumLinearShareInv := new(big.Int).ModInverse(sumLinearShare, p2.Params.EcModPrime)
+	p2.Params.EtaShare = new(big.Int).Mod(new(big.Int).Mul(p2.Params.RhoShare, sumLinearShareInv), p2.Params.EcModPrime)
+
+	return nil
+}
+
+func (p2 *ec2fParty2) ComputeSShare() error {
+
+	// mtaShare is gamma2
+
+	// compute linear relation of s share
+
+	return nil
+}
+
+type ec2fParty1 struct {
+	Params       *ec2fParams
+	HePrivateKey *paillier.PrivateKey
+}
+
+func createEc2fParty1(x1, y1, modP *big.Int, r io.Reader) (ec2fParty1, error) {
+
+	// init party1
+	var p1 ec2fParty1
+
+	// init ec2f parameters
+	// ec2fParams := new(ec2fParams)
+	ec2fParams := &ec2fParams{
+		Random:     r,
+		EcModPrime: modP,
+		XShare:     new(big.Int).Mod(new(big.Int).Neg(x1), modP),
+		YShare:     new(big.Int).Mod(new(big.Int).Neg(y1), modP),
+	}
+
+	// rhoShare generation
+	rhoShare, err := genRandom(p1.Params.Random, p1.Params.EcModPrime)
+	if err != nil {
+		return p1, errors.New("rhoShare genRandom error")
+	}
+	ec2fParams.RhoShare = rhoShare
+
+	// set ec2f params
+	p1.Params = ec2fParams
+
+	// init paillier
+	paillier, err := genHePrivateKey(p1.Params.Random)
+	if err != nil {
+		return p1, errors.New("genHePrivateKey error")
+	}
+
+	// set homomorphic encryption (he) params
+	p1.HePrivateKey = paillier.PrivateKey
+
+	return p1, nil
+}
+
+func (p1 *ec2fParty1) MtaEncrypt(plains ...*big.Int) ([][]byte, error) {
+
+	// encrypt values
+	var cipherdata [][]byte
+	for i := 0; i < len(plains); i++ {
+		c, err := p1.HePrivateKey.Encrypt(plains[i], p1.Params.Random)
+		if err != nil {
+			return nil, errors.New("paillier encryption error")
+		}
+		cipherdata = append(cipherdata, c.C.Bytes())
+	}
+
+	return cipherdata, nil
+}
+
+func (p1 *ec2fParty1) ComputeMtaShare(cipherdata []byte) error {
+
+	// parse paillier cipher text
+	paillierCypher := new(paillier.Cypher)
+	paillierCypher.C = new(big.Int).SetBytes(cipherdata)
+	p1.Params.MtaShare = p1.HePrivateKey.Decrypt(paillierCypher)
+	p1.Params.MtaShare = new(big.Int).Mod(p1.Params.MtaShare, p1.Params.EcModPrime)
+
+	return nil
+}
+
+func (p1 *ec2fParty1) ComputeLinearShare(mtaType int) error {
+
+	// compute linearShare
+	linearShare := new(big.Int)
+	switch mtaType {
+	case 0:
+		linearShare = new(big.Int).Mul(p1.Params.XShare, p1.Params.RhoShare)
+	case 1:
+		linearShare = new(big.Int).Mul(p1.Params.YShare, p1.Params.EtaShare)
+	default:
+		return errors.New("could not compute linearShare")
+	}
+	p1.Params.LinearShare = new(big.Int).Add(linearShare, p1.Params.MtaShare)
+	p1.Params.LinearShare = new(big.Int).Mod(p1.Params.LinearShare, p1.Params.EcModPrime)
+
+	return nil
+}
+
+func (p1 *ec2fParty1) ComputeEtaShare(externalLinearShare []byte) error {
+
+	// compute sum linear share
+	parsedLinearShare := new(big.Int).SetBytes(externalLinearShare)
+	sumLinearShare := new(big.Int).Add(p1.Params.LinearShare, parsedLinearShare)
+	sumLinearShare = new(big.Int).Mod(sumLinearShare, p1.Params.EcModPrime)
+
+	// compute eta at client and compute new mta c1 values
+	sumLinearShareInv := new(big.Int).ModInverse(sumLinearShare, p1.Params.EcModPrime)
+	p1.Params.EtaShare = new(big.Int).Mod(new(big.Int).Mul(p1.Params.RhoShare, sumLinearShareInv), p1.Params.EcModPrime)
+
+	return nil
+}
+
+func (p1 *ec2fParty1) ComputeSShare() error {
+
+	// mtaShare is gamma1
+
+	// compute linear relation of s share
+
+	return nil
+}
+
+func (p1 *ec2fParty1) GetHePubKeyBytes() []byte {
+	return p1.HePrivateKey.PublicKey.N.Bytes()
+}
+
+// messages
+
+type ec2fMtaMsg1 struct {
+	Cipherdata  [][]byte
+	HePublicKey []byte
+}
+
+type ec2fMtaMsg2 struct {
+	Cipherdata []byte
+	DeltaShare []byte
+}
+
+type ec2fMtaMsg3 struct {
+	Cipherdata [][]byte
+	DeltaShare []byte
+}
+
+type ec2fMtaMsg4 struct {
+	Cipherdata  []byte
+	LambdaShare []byte
+}
+
+type ec2fMtaMsg5 struct {
+	Cipherdata [][]byte
+}
+
+type ec2fMtaMsg6 struct {
+	Cipherdata []byte
 }
 
 // ectf in other notation
@@ -359,3 +665,123 @@ func mtaFinish() {
 
 // step 1.2 https://github.com/tlsnotary/how_it_works/blob/master/how_it_works.md#12-computing-b-x_q-x_pp-3
 // computing
+
+/////////////////////////
+// other notation
+/////////////////////////
+
+// old sequence in detail
+
+// // p for modulo computations
+// modP := curveParams.P
+
+// // pailier parameters
+// paillierParams, err := initPaillier(config.rand())
+// if err != nil {
+// 	return errors.New("initPaillier error")
+// }
+
+// // compute rho1 at client
+// // curveParams.P, config.rand() // curveParams.P is *big.Int
+// rho1, err := genRandom(config.rand(), modP)
+// if err != nil {
+// 	return errors.New("rho1 genRandom error")
+// }
+
+// // turn ec params into big integer numbers
+// minusX1 := new(big.Int).Mod(new(big.Int).Neg(x1), modP)
+// minusY1 := new(big.Int).Mod(new(big.Int).Neg(y1), modP)
+
+// encryptMinusX1, err := paillierParams.PrivateKey.Encrypt(minusX1, config.rand())
+// if err != nil {
+// 	return errors.New("paillier encryption minusX1 error")
+// }
+// encryptRho1, err := paillierParams.PrivateKey.Encrypt(rho1, config.rand())
+// if err != nil {
+// 	return errors.New("paillier encryption rho1 error")
+// }
+// access bytes of encrypted paillier value with encryptRho1.C.Bytes()
+
+// sending paillier public key, bytes of encryptRho1, bytes of minusX1
+
+// // proxy paillier public key parsing
+// proxyPaillierPubKey := new(paillier.PublicKey)
+// proxyPaillierPubKey.N = new(big.Int).SetBytes(paillierParams.PublicKey.N.Bytes())
+// nSquare := proxyPaillierPubKey.GetNSquare()
+
+// // compute rho2 at proxy
+// rho2, err := genRandom(rand.Reader, modP)
+// if err != nil {
+// 	return errors.New("rho2 genRandom error")
+// }
+// // proxy rand m generation, we are calling it secretMtaBeta now
+// secretMtaBeta, err := genRandom(rand.Reader, modP)
+// if err != nil {
+// 	return errors.New("secretMtaBeta genRandom error")
+// }
+
+// // parse mta values of client
+// parsedEncryptMinusX1 := new(big.Int).SetBytes(encryptMinusX1.C.Bytes())
+// parsedEncryptRho1 := new(big.Int).SetBytes(encryptRho1.C.Bytes())
+
+// // vector mta combine encrypted rhos and xX values
+// encryptMinusX1Rho2 := new(big.Int).Exp(parsedEncryptMinusX1, rho2, nSquare)
+// encryptRho1X2 := new(big.Int).Exp(parsedEncryptRho1, x2, nSquare)
+// encryptVec := new(big.Int).Mul(encryptMinusX1Rho2, encryptRho1X2)
+
+// // add encrypted randomness of secretMtaBeta
+// // first encrypt secretMtaBeta
+// encryptSecretMtaBeta, err := proxyPaillierPubKey.Encrypt(secretMtaBeta, rand.Reader)
+// if err != nil {
+// 	return errors.New("encryptSecretMtaBeta proxyPaillierPubKey.Encrypt error")
+// }
+// // now add to encrypted paillier vector of values
+// encryptVec = new(big.Int).Mul(encryptVec, encryptSecretMtaBeta.C)
+// // vector modulo operation
+// encryptVec = new(big.Int).Mul(encryptVec, nSquare)
+// // c2Bytes := encryptVec.Bytes()
+
+// // compute proxy alpha2
+// proxyAlpha2 := new(big.Int).Neg(secretMtaBeta)
+// proxyAlpha2 = new(big.Int).Mod(proxyAlpha2, modP)
+
+// // computing delta2
+// delta2 := new(big.Int).Mul(x2, rho2)
+// delta2 = new(big.Int).Add(delta2, proxyAlpha2)
+// delta2 = new(big.Int).Mod(delta2, modP)
+
+// // share delta2 with client with delta2.Bytes()
+
+// at client
+
+// // decrypt encrypted vector of proxy and access clientAlpha1 value
+// // parse paillier cipher text
+// paillierCypher := new(paillier.Cypher)
+// paillierCypher.C = new(big.Int).SetBytes(encryptVec.Bytes())
+// clientAlpha1 := paillierParams.PrivateKey.Decrypt(paillierCypher)
+// clientAlpha1 = new(big.Int).Mod(clientAlpha1, modP)
+
+// // compute delta1 at client
+// delta1 := new(big.Int).Mul(minusX1, rho1)
+// delta1 = new(big.Int).Add(delta1, clientAlpha1)
+// delta1 = new(big.Int).Mod(delta1, modP)
+
+// // compute delta at client
+// delta2client := new(big.Int).SetBytes(delta2.Bytes())
+// clientDelta := new(big.Int).Add(delta1, delta2client)
+// clientDelta = new(big.Int).Mod(clientDelta, modP)
+
+// // compute delta at proxy
+// delta1proxy := new(big.Int).SetBytes(delta1.Bytes())
+// proxyDelta := new(big.Int).Add(delta2, delta1proxy)
+// proxyDelta = new(big.Int).Mod(proxyDelta, modP)
+
+// if !bytes.Equal(clientDelta.Bytes(), proxyDelta.Bytes()) {
+// 	return errors.New("delta computation failed")
+// }
+
+// // compute eta at client and compute new mta c1 values
+// deltaInv := new(big.Int).ModInverse(clientDelta, modP)
+// eta1 := new(big.Int).Mod(new(big.Int).Mul(rho1, deltaInv), modP)
+
+// // continue to compute ec2f on the client side in 2PC
