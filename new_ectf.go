@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"time"
 
 	"github.com/didiercrunch/paillier"
 )
@@ -130,20 +131,13 @@ func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serve
 		fmt.Println("3PHS ec computation add up failed")
 	}
 
-	fmt.Println("z:", z)
-	fmt.Println("xCoord:", xCoord)
+	// fmt.Println("z:", z)
+	// fmt.Println("xCoord:", xCoord)
+
+	start := time.Now()
 
 	// compute new x cord
-	// testPubKey, err := clientKey.Curve().NewPublicKey(addClientSecretsPublicKey)
-	// if err != nil {
-	// 	return errors.New("pk parsing failed")
-	// }
 	xtest, ytest := elliptic.Unmarshal(curve, serverKey.PublicKey().Bytes())
-
-	// x, y := elliptic.Unmarshal(curve, peerPublicKey)
-	// if x == nil {
-	// 	return nil
-	// }
 
 	xShared, yShared := curve.ScalarMult(xtest, ytest, clientKey.Bytes())
 	sharedKeyX := make([]byte, (curve.Params().BitSize+7)/8)
@@ -152,8 +146,8 @@ func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serve
 	yShared.FillBytes(sharedKeyY)
 
 	// xBs, _ := hex.DecodeString(xtest.String())
-	fmt.Println("x1:", xShared)
-	fmt.Println("y1:", yShared)
+	// fmt.Println("x1:", xShared)
+	// fmt.Println("y1:", yShared)
 
 	x1 := new(big.Int).SetBytes(sharedKeyX)
 	y1 := new(big.Int).SetBytes(sharedKeyY)
@@ -167,8 +161,8 @@ func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serve
 	x2 := new(big.Int).SetBytes(sharedKeyX2)
 	y2 := new(big.Int).SetBytes(sharedKeyY2)
 
-	fmt.Println("x2:", xShared)
-	fmt.Println("y2:", yShared)
+	// fmt.Println("x2:", xShared)
+	// fmt.Println("y2:", yShared)
 
 	// added := new(big.Int).Mod(new(big.Int).Add(x1, x2), curveParams.P)
 	// bs, _ := hex.DecodeString(added.String())
@@ -224,6 +218,9 @@ func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serve
 		Cipherdata:  cipher1,
 	}
 
+	sumBytesMsg1 := len(msg1.HePublicKey) + len(msg1.Cipherdata)
+	fmt.Println("msg1 total bytes:", sumBytesMsg1)
+
 	// msg1 send to proxy
 
 	// @proxy, process msg 1 and compute mta msg 2
@@ -253,6 +250,9 @@ func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serve
 		Cipherdata: cipher2,
 		DeltaShare: proxyEc2fParty.Params.LinearShare.Bytes(),
 	}
+
+	sumBytesMsg2 := len(msg2.Cipherdata) + len(msg2.DeltaShare)
+	fmt.Println("msg2 total bytes:", sumBytesMsg2)
 
 	// msg2 send to client
 
@@ -287,6 +287,9 @@ func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serve
 		DeltaShare: clientEc2fParty.Params.LinearShare.Bytes(),
 	}
 
+	sumBytesMsg3 := len(msg3.Cipherdata) + len(msg3.DeltaShare)
+	fmt.Println("msg3 total bytes:", sumBytesMsg3)
+
 	// msg3 send to proxy
 
 	// @proxy, derive etaShare
@@ -313,9 +316,11 @@ func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serve
 
 	// @proxy, create msg4
 	msg4 := ec2fMtaMsg4{
-		Cipherdata:  cipher2,
-		LambdaShare: proxyEc2fParty.Params.LinearShare.Bytes(),
+		Cipherdata: cipher2,
 	}
+
+	sumBytesMsg4 := len(msg4.Cipherdata)
+	fmt.Println("msg4 total bytes:", sumBytesMsg4)
 
 	// msg4 send to client
 
@@ -345,6 +350,9 @@ func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serve
 		Cipherdata: cipher1,
 	}
 
+	sumBytesMsg5 := len(msg5.Cipherdata)
+	fmt.Println("msg5 total bytes:", sumBytesMsg5)
+
 	// msg5 send to proxy
 
 	// @proxy, evaluate last scalar mta message
@@ -366,6 +374,9 @@ func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serve
 	msg6 := ec2fMtaMsg6{
 		Cipherdata: cipher2,
 	}
+
+	sumBytesMsg6 := len(msg6.Cipherdata)
+	fmt.Println("msg6 total bytes:", sumBytesMsg6)
 
 	// msg5 send to client
 
@@ -390,7 +401,13 @@ func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serve
 	additiveS := new(big.Int).Add(clientEc2fParty.Params.SShare, proxyEc2fParty.Params.SShare)
 	s := new(big.Int).Mod(additiveS, curveParams.P)
 
-	fmt.Println("s", s.Bytes())
+	// fmt.Println("s", s.Bytes())
+
+	elapsed := time.Since(start)
+	fmt.Println("total time ec2f:", elapsed)
+
+	totalCommunicationBytes := sumBytesMsg1 + sumBytesMsg2 + sumBytesMsg3 + sumBytesMsg4 + sumBytesMsg5 + sumBytesMsg6
+	fmt.Println("total bytes communicated:", totalCommunicationBytes)
 
 	if !bytes.Equal(s.Bytes(), z) {
 		return errors.New("s calculation failed")
@@ -716,8 +733,7 @@ type ec2fMtaMsg3 struct {
 }
 
 type ec2fMtaMsg4 struct {
-	Cipherdata  []byte
-	LambdaShare []byte
+	Cipherdata []byte
 }
 
 type ec2fMtaMsg5 struct {
@@ -744,123 +760,3 @@ type ec2fMtaMsg6 struct {
 
 // step 1.2 https://github.com/tlsnotary/how_it_works/blob/master/how_it_works.md#12-computing-b-x_q-x_pp-3
 // computing
-
-/////////////////////////
-// other notation
-/////////////////////////
-
-// old sequence in detail
-
-// // p for modulo computations
-// modP := curveParams.P
-
-// // pailier parameters
-// paillierParams, err := initPaillier(config.rand())
-// if err != nil {
-// 	return errors.New("initPaillier error")
-// }
-
-// // compute rho1 at client
-// // curveParams.P, config.rand() // curveParams.P is *big.Int
-// rho1, err := genRandom(config.rand(), modP)
-// if err != nil {
-// 	return errors.New("rho1 genRandom error")
-// }
-
-// // turn ec params into big integer numbers
-// minusX1 := new(big.Int).Mod(new(big.Int).Neg(x1), modP)
-// minusY1 := new(big.Int).Mod(new(big.Int).Neg(y1), modP)
-
-// encryptMinusX1, err := paillierParams.PrivateKey.Encrypt(minusX1, config.rand())
-// if err != nil {
-// 	return errors.New("paillier encryption minusX1 error")
-// }
-// encryptRho1, err := paillierParams.PrivateKey.Encrypt(rho1, config.rand())
-// if err != nil {
-// 	return errors.New("paillier encryption rho1 error")
-// }
-// access bytes of encrypted paillier value with encryptRho1.C.Bytes()
-
-// sending paillier public key, bytes of encryptRho1, bytes of minusX1
-
-// // proxy paillier public key parsing
-// proxyPaillierPubKey := new(paillier.PublicKey)
-// proxyPaillierPubKey.N = new(big.Int).SetBytes(paillierParams.PublicKey.N.Bytes())
-// nSquare := proxyPaillierPubKey.GetNSquare()
-
-// // compute rho2 at proxy
-// rho2, err := genRandom(rand.Reader, modP)
-// if err != nil {
-// 	return errors.New("rho2 genRandom error")
-// }
-// // proxy rand m generation, we are calling it secretMtaBeta now
-// secretMtaBeta, err := genRandom(rand.Reader, modP)
-// if err != nil {
-// 	return errors.New("secretMtaBeta genRandom error")
-// }
-
-// // parse mta values of client
-// parsedEncryptMinusX1 := new(big.Int).SetBytes(encryptMinusX1.C.Bytes())
-// parsedEncryptRho1 := new(big.Int).SetBytes(encryptRho1.C.Bytes())
-
-// // vector mta combine encrypted rhos and xX values
-// encryptMinusX1Rho2 := new(big.Int).Exp(parsedEncryptMinusX1, rho2, nSquare)
-// encryptRho1X2 := new(big.Int).Exp(parsedEncryptRho1, x2, nSquare)
-// encryptVec := new(big.Int).Mul(encryptMinusX1Rho2, encryptRho1X2)
-
-// // add encrypted randomness of secretMtaBeta
-// // first encrypt secretMtaBeta
-// encryptSecretMtaBeta, err := proxyPaillierPubKey.Encrypt(secretMtaBeta, rand.Reader)
-// if err != nil {
-// 	return errors.New("encryptSecretMtaBeta proxyPaillierPubKey.Encrypt error")
-// }
-// // now add to encrypted paillier vector of values
-// encryptVec = new(big.Int).Mul(encryptVec, encryptSecretMtaBeta.C)
-// // vector modulo operation
-// encryptVec = new(big.Int).Mul(encryptVec, nSquare)
-// // c2Bytes := encryptVec.Bytes()
-
-// // compute proxy alpha2
-// proxyAlpha2 := new(big.Int).Neg(secretMtaBeta)
-// proxyAlpha2 = new(big.Int).Mod(proxyAlpha2, modP)
-
-// // computing delta2
-// delta2 := new(big.Int).Mul(x2, rho2)
-// delta2 = new(big.Int).Add(delta2, proxyAlpha2)
-// delta2 = new(big.Int).Mod(delta2, modP)
-
-// // share delta2 with client with delta2.Bytes()
-
-// at client
-
-// // decrypt encrypted vector of proxy and access clientAlpha1 value
-// // parse paillier cipher text
-// paillierCypher := new(paillier.Cypher)
-// paillierCypher.C = new(big.Int).SetBytes(encryptVec.Bytes())
-// clientAlpha1 := paillierParams.PrivateKey.Decrypt(paillierCypher)
-// clientAlpha1 = new(big.Int).Mod(clientAlpha1, modP)
-
-// // compute delta1 at client
-// delta1 := new(big.Int).Mul(minusX1, rho1)
-// delta1 = new(big.Int).Add(delta1, clientAlpha1)
-// delta1 = new(big.Int).Mod(delta1, modP)
-
-// // compute delta at client
-// delta2client := new(big.Int).SetBytes(delta2.Bytes())
-// clientDelta := new(big.Int).Add(delta1, delta2client)
-// clientDelta = new(big.Int).Mod(clientDelta, modP)
-
-// // compute delta at proxy
-// delta1proxy := new(big.Int).SetBytes(delta1.Bytes())
-// proxyDelta := new(big.Int).Add(delta2, delta1proxy)
-// proxyDelta = new(big.Int).Mod(proxyDelta, modP)
-
-// if !bytes.Equal(clientDelta.Bytes(), proxyDelta.Bytes()) {
-// 	return errors.New("delta computation failed")
-// }
-
-// // compute eta at client and compute new mta c1 values
-// deltaInv := new(big.Int).ModInverse(clientDelta, modP)
-// eta1 := new(big.Int).Mod(new(big.Int).Mul(rho1, deltaInv), modP)
-
-// // continue to compute ec2f on the client side in 2PC

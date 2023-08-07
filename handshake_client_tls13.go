@@ -370,7 +370,7 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 	if err != nil {
 		fmt.Println("error in computeECTF", err)
 	}
-	fmt.Println("keyshares", hs.hello.keyShares[:])
+	// fmt.Println("keyshares", hs.hello.keyShares[:])
 
 	// jan: diffie hellman key
 	peerKey, err := hs.ecdheKey.Curve().NewPublicKey(hs.serverHello.serverShare.data)
