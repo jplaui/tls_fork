@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"client/tls_fork/ecdh"
 	"client/tls_fork/internal/nistec"
+
+	// "crypto/ecdh"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +17,298 @@ import (
 
 	"github.com/didiercrunch/paillier"
 )
+
+func genProxyShare(config *Config, cID CurveID, clientKey *ecdh.PrivateKey) (*ecdh.PrivateKey, *ecdh.PublicKey, error) {
+
+	// get curve params to allow addition of keys
+	var curve elliptic.Curve
+	var ok bool
+	if curve, ok = ellipticCurveForCurveID(cID); cID != X25519 && !ok {
+		return nil, nil, errors.New("tls: server selected unsupported curve")
+	}
+	// get curve params
+	curveParams := curve.Params()
+
+	// modified for proxy key2 generation
+	key2, err := generateECDHEKey(config.rand(), cID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// merge proxy and client key public keys
+	proxyPubKeyX, proxyPubKeyY := elliptic.Unmarshal(curve, key2.PublicKey().Bytes())
+	clientPubKeyX, clientPubKeyY := elliptic.Unmarshal(curve, clientKey.PublicKey().Bytes())
+	clientProxyPubkeyX, clientProxyPubkeyY := curveParams.Add(clientPubKeyX, clientPubKeyY, proxyPubKeyX, proxyPubKeyY)
+	clientProxyPubkey := elliptic.Marshal(curve, clientProxyPubkeyX, clientProxyPubkeyY)
+
+	// paste public key
+	pcPubKey, err := clientKey.Curve().NewPublicKey(clientProxyPubkey)
+	if err != nil {
+		return nil, nil, errors.New("pk parsing failed")
+	}
+	// server key is derived as: z, err := serverKey.ECDH(pcPubKey)
+
+	return key2, pcPubKey, nil
+}
+
+func genClientSharesDHE(config *Config, serverPubKeyBytes []byte, clientKey, proxyKey *ecdh.PrivateKey) ([]byte, error) {
+
+	// get curveID
+	curveID, ok1 := curveIDForCurve(clientKey.Curve())
+	if !ok1 {
+		return nil, errors.New("cannot get curveID")
+	}
+	var curve elliptic.Curve
+	var ok bool
+	if curve, ok = ellipticCurveForCurveID(curveID); curveID != X25519 && !ok {
+		return nil, errors.New("tls: server selected unsupported curve")
+	}
+
+	// get curve params
+	curveParams := curve.Params()
+
+	// compute new x cord
+	xtest, ytest := elliptic.Unmarshal(curve, serverPubKeyBytes)
+
+	xShared, yShared := curve.ScalarMult(xtest, ytest, clientKey.Bytes())
+	sharedKeyX := make([]byte, (curve.Params().BitSize+7)/8)
+	sharedKeyY := make([]byte, (curve.Params().BitSize+7)/8)
+	xShared.FillBytes(sharedKeyX)
+	yShared.FillBytes(sharedKeyY)
+
+	// xBs, _ := hex.DecodeString(xtest.String())
+	// fmt.Println("x1:", xShared)
+	// fmt.Println("y1:", yShared)
+
+	// client key shares
+	x1 := new(big.Int).SetBytes(sharedKeyX)
+	y1 := new(big.Int).SetBytes(sharedKeyY)
+
+	xShared2, yShared2 := curve.ScalarMult(xtest, ytest, proxyKey.Bytes())
+	sharedKeyX2 := make([]byte, (curve.Params().BitSize+7)/8)
+	sharedKeyY2 := make([]byte, (curve.Params().BitSize+7)/8)
+	xShared2.FillBytes(sharedKeyX2)
+	yShared2.FillBytes(sharedKeyY2)
+
+	// proxy key shares
+	x2 := new(big.Int).SetBytes(sharedKeyX2)
+	y2 := new(big.Int).SetBytes(sharedKeyY2)
+
+	// @client, set client to party 1
+	clientEc2fParty, err := createEc2fParty1(x1, y1, curveParams.P, rand.Reader)
+	if err != nil {
+		return nil, errors.New("createEc2fParty1 error")
+	}
+
+	// @proxy, set proxy to party 2
+	proxyEc2fParty, err := createEc2fParty2(x2, y2, curveParams.P, rand.Reader)
+	if err != nil {
+		return nil, errors.New("createEc2fParty2 error")
+	}
+
+	// @client, compute mta message 1
+	cipher1, err := clientEc2fParty.MtaEncrypt(
+		clientEc2fParty.Params.XShare,
+		clientEc2fParty.Params.RhoShare,
+	)
+	if err != nil {
+		return nil, errors.New("MtaEncrypt(XShare, RhoShare) error")
+	}
+
+	// @client, create msg1
+	msg1 := ec2fMtaMsg1{
+		HePublicKey: clientEc2fParty.GetHePubKeyBytes(),
+		Cipherdata:  cipher1,
+	}
+
+	sumBytesMsg1 := len(msg1.HePublicKey) + len(msg1.Cipherdata)
+	fmt.Println("msg1 total bytes:", sumBytesMsg1)
+
+	// msg1 send to proxy
+
+	// @proxy, process msg 1 and compute mta msg 2
+	err = proxyEc2fParty.SetHePublicKey(msg1.HePublicKey)
+	if err != nil {
+		return nil, errors.New("SetHePublicKey(HePublicKey)")
+	}
+
+	// @proxy, evaluate mta data
+	cipher2, err := proxyEc2fParty.MtaEvaluate(
+		msg1.Cipherdata,
+		proxyEc2fParty.Params.RhoShare,
+		proxyEc2fParty.Params.XShare,
+	)
+	if err != nil {
+		return nil, errors.New("MtaEvaluate(HePublicKey, Cipherdata, RhoShare, XShare) error")
+	}
+
+	// @proxy, compute delta share
+	err = proxyEc2fParty.ComputeLinearShare(0)
+	if err != nil {
+		return nil, errors.New("ComputeLinearShare(0) error")
+	}
+
+	// @proxy, create msg2
+	msg2 := ec2fMtaMsg2{
+		Cipherdata: cipher2,
+		DeltaShare: proxyEc2fParty.Params.LinearShare.Bytes(),
+	}
+
+	sumBytesMsg2 := len(msg2.Cipherdata) + len(msg2.DeltaShare)
+	fmt.Println("msg2 total bytes:", sumBytesMsg2)
+
+	// msg2 send to client
+
+	// @client, compute mta share and set in params
+	err = clientEc2fParty.ComputeMtaShare(msg2.Cipherdata)
+	if err != nil {
+		return nil, errors.New("client ComputeMtaShare(msg2.Cipherdata) error")
+	}
+
+	// @client, compute linear share and decide on case
+	err = clientEc2fParty.ComputeLinearShare(0)
+	if err != nil {
+		return nil, errors.New("client ComputeLinearShare(0) error")
+	}
+
+	// @client, process msg 2 and exchange deltaShare with next mta msg1
+	err = clientEc2fParty.ComputeEtaShare(msg2.DeltaShare)
+	if err != nil {
+		return nil, errors.New("client ComputeEtaShare() error")
+	}
+
+	// @client, compute msg3
+	cipher1, err = clientEc2fParty.MtaEncrypt(
+		clientEc2fParty.Params.YShare,
+		clientEc2fParty.Params.EtaShare,
+	)
+	if err != nil {
+		return nil, errors.New("MtaEncrypt(YShare, EtaShare) error")
+	}
+	msg3 := ec2fMtaMsg3{
+		Cipherdata: cipher1,
+		DeltaShare: clientEc2fParty.Params.LinearShare.Bytes(),
+	}
+
+	sumBytesMsg3 := len(msg3.Cipherdata) + len(msg3.DeltaShare)
+	fmt.Println("msg3 total bytes:", sumBytesMsg3)
+
+	// msg3 send to proxy
+
+	// @proxy, derive etaShare
+	err = proxyEc2fParty.ComputeEtaShare(msg3.DeltaShare)
+	if err != nil {
+		return nil, errors.New("proxy ComputeEtaShare() error")
+	}
+
+	// @proxy, derive etaShare and evaluate mta2
+	cipher2, err = proxyEc2fParty.MtaEvaluate(
+		msg3.Cipherdata,
+		proxyEc2fParty.Params.EtaShare,
+		proxyEc2fParty.Params.YShare,
+	)
+	if err != nil {
+		return nil, errors.New("MtaEvaluate(HePublicKey, Cipherdata, EtaShare, YShare) error")
+	}
+
+	// @proxy, compute lambda share
+	err = proxyEc2fParty.ComputeLinearShare(1)
+	if err != nil {
+		return nil, errors.New("ComputeLinearShare(1) error")
+	}
+
+	// @proxy, create msg4
+	msg4 := ec2fMtaMsg4{
+		Cipherdata: cipher2,
+	}
+
+	sumBytesMsg4 := len(msg4.Cipherdata)
+	fmt.Println("msg4 total bytes:", sumBytesMsg4)
+
+	// msg4 send to client
+
+	// @client, compute mta share and set in params
+	err = clientEc2fParty.ComputeMtaShare(msg4.Cipherdata)
+	if err != nil {
+		return nil, errors.New("client ComputeMtaShare(msg4.Cipherdata) error")
+	}
+
+	// @client, compute linear share and decide on case
+	err = clientEc2fParty.ComputeLinearShare(1)
+	if err != nil {
+		return nil, errors.New("client ComputeLinearShare(1) error")
+	}
+	// now, lambda correctly set at both parties at linearShare param
+
+	// @client, compute scalar mta encryption
+	cipher1, err = clientEc2fParty.MtaEncrypt(
+		clientEc2fParty.Params.LinearShare,
+	)
+	if err != nil {
+		return nil, errors.New("MtaEncrypt(LinearShare) error")
+	}
+
+	// @client, build last message
+	msg5 := ec2fMtaMsg5{
+		Cipherdata: cipher1,
+	}
+
+	sumBytesMsg5 := len(msg5.Cipherdata)
+	fmt.Println("msg5 total bytes:", sumBytesMsg5)
+
+	// msg5 send to proxy
+
+	// @proxy, evaluate last scalar mta message
+	cipher2, err = proxyEc2fParty.MtaEvaluate(
+		msg5.Cipherdata,
+		proxyEc2fParty.Params.LinearShare,
+	)
+	if err != nil {
+		return nil, errors.New("MtaEvaluate(HePublicKey, Cipherdata, EtaShare, YShare) error")
+	}
+
+	// @proxy, compute SShare
+	err = proxyEc2fParty.ComputeSShare()
+	if err != nil {
+		return nil, errors.New("proxy ComputeSShare() error")
+	}
+
+	// @proxy, return msg6
+	msg6 := ec2fMtaMsg6{
+		Cipherdata: cipher2,
+	}
+
+	sumBytesMsg6 := len(msg6.Cipherdata)
+	fmt.Println("msg6 total bytes:", sumBytesMsg6)
+
+	// msg5 send to client
+
+	// @client, decrypt scalar mta msg
+	err = clientEc2fParty.ComputeMtaShare(msg6.Cipherdata)
+	if err != nil {
+		return nil, errors.New("client ComputeMtaShare(msg6.Cipherdata) error")
+	}
+
+	// @client, derive s share
+	err = clientEc2fParty.ComputeSShare(x1)
+	if err != nil {
+		return nil, errors.New("client ComputeSShare() error")
+	}
+
+	// check if s shares work
+	sClient := clientEc2fParty.Params.SShare.Bytes()
+	sProxy := proxyEc2fParty.Params.SShare.Bytes()
+	fmt.Println("s share client:", sClient, hex.EncodeToString(sClient))
+	fmt.Println("s share proxy:", sProxy, hex.EncodeToString(sProxy))
+
+	additiveS := new(big.Int).Add(clientEc2fParty.Params.SShare, proxyEc2fParty.Params.SShare)
+	s := new(big.Int).Mod(additiveS, curveParams.P)
+
+	fmt.Println("mod curveparams P:", hex.EncodeToString(curveParams.P.Bytes()))
+	fmt.Println("s DHE secret", s.Bytes(), hex.EncodeToString(s.Bytes()))
+
+	return s.Bytes(), nil
+}
 
 func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serverHelloMsg, clientKey *ecdh.PrivateKey) error {
 	fmt.Println("inside computeECTF...")
@@ -62,6 +357,7 @@ func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serve
 	clientProxyPubkey := elliptic.Marshal(curve, clientProxyPubkeyX, clientProxyPubkeyY)
 
 	// paste public key
+	// client public key
 	pcPubKey, err := clientKey.Curve().NewPublicKey(clientProxyPubkey)
 	if err != nil {
 		return errors.New("pk parsing failed")
@@ -131,8 +427,8 @@ func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serve
 		fmt.Println("3PHS ec computation add up failed")
 	}
 
-	// fmt.Println("z:", z)
-	// fmt.Println("xCoord:", xCoord)
+	fmt.Println("z:", z, hex.EncodeToString(z))
+	fmt.Println("xCoord:", xCoord, hex.EncodeToString(xCoord))
 
 	start := time.Now()
 
@@ -395,13 +691,21 @@ func computeECTF(config *Config, clientHello *clientHelloMsg, serverHello *serve
 	// check if s shares work
 	sClient := clientEc2fParty.Params.SShare.Bytes()
 	sProxy := proxyEc2fParty.Params.SShare.Bytes()
-	fmt.Println("s share client:", sClient)
-	fmt.Println("s share proxy:", sProxy)
+	fmt.Println("s share client:", sClient, hex.EncodeToString(sClient))
+	fmt.Println("s share proxy:", sProxy, hex.EncodeToString(sProxy))
+
+	// simple xor example
+	c := make([]byte, len(sProxy))
+	for i := range sProxy {
+		c[i] = sClient[i] ^ sProxy[i]
+	}
+
+	fmt.Println("xor reconstruction of DHE:", hex.EncodeToString(c))
 
 	additiveS := new(big.Int).Add(clientEc2fParty.Params.SShare, proxyEc2fParty.Params.SShare)
 	s := new(big.Int).Mod(additiveS, curveParams.P)
 
-	// fmt.Println("s", s.Bytes())
+	fmt.Println("s DHE secret", s.Bytes(), hex.EncodeToString(s.Bytes()))
 
 	elapsed := time.Since(start)
 	fmt.Println("total time ec2f:", elapsed)

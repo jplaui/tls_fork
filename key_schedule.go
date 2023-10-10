@@ -8,6 +8,7 @@ import (
 	"client/tls_fork/ecdh"
 	"crypto/elliptic"
 	"crypto/hmac"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash"
@@ -43,6 +44,7 @@ func (c *cipherSuiteTLS13) expandLabel(secret []byte, label string, context []by
 		b.AddBytes(context)
 	})
 	hkdfLabelBytes, err := hkdfLabel.Bytes()
+	fmt.Println("label:", string(hkdfLabelBytes), "label hex:", hex.EncodeToString(hkdfLabelBytes))
 	if err != nil {
 		// Rather than calling BytesOrPanic, we explicitly handle this error, in
 		// order to provide a reasonable error message. It should be basically

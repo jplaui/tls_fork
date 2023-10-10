@@ -8,6 +8,7 @@ import (
 	"crypto/hmac"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"math/bits"
 	"reflect"
 )
@@ -29,7 +30,9 @@ func ZKIntermediateHashHSopad(HS []byte) []byte {
 
 func PSHTSin(intermediateHashHSipad, H2 []byte) []byte {
 	mH2 := GetSha256LabelTLS13("s hs traffic", H2, 32)
+	fmt.Println("mH2:", hex.EncodeToString(mH2))
 	SHTSin, _, _ := SumMDShacal2(64, intermediateHashHSipad, mH2)
+	fmt.Println("SHTSin", hex.EncodeToString(SHTSin))
 	return SHTSin
 }
 
@@ -141,8 +144,10 @@ func PIntermediateHashHSopad(HSBytes []byte) []byte {
 
 func PIntermediateHashHSipad(HSBytes []byte) []byte {
 	HSipad := XorIPad(HSBytes)
+	fmt.Println("HSipad", hex.EncodeToString(HSipad))
 	IV := make([]byte, 0)
-	_, intermediateHashHSipad, _ := SumMDShacal2(0, IV, HSipad)
+	h, intermediateHashHSipad, _ := SumMDShacal2(0, IV, HSipad)
+	fmt.Println("h", hex.EncodeToString(h))
 	return intermediateHashHSipad
 }
 
