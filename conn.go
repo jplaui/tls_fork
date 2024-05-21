@@ -462,6 +462,7 @@ func (hc *halfConn) decrypt(record []byte, handshakeComplete bool) ([]byte, reco
 				if handshakeComplete {
 
 					// capture post handshake traffic (server response data)
+					// tmp_nonce is sequence number
 					hc.setRecordMeta(additionalData, plaintext, ciphertextCopy, tmp_nonce, "SR")
 				}
 			}
